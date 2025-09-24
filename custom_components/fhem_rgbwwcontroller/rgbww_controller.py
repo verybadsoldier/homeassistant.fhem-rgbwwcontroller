@@ -1,4 +1,4 @@
-# ruff: noqa
+# noqa: D102
 from dataclasses import dataclass
 import enum
 import httpx
@@ -24,7 +24,7 @@ class RgbwwStateUpdate(Protocol):
 
 
 class RgbwwReceiver(Protocol):
-    def on_json_message(self, json_msg: str) -> None:
+    def on_json_message(self, json_msg: dict) -> None:
         pass
 
     def on_connect_status_change(self, connected: bool) -> None:
@@ -49,31 +49,23 @@ class _TcpReceiver(asyncio.Protocol):
         _logger.error("%s - Connection established", self._host)
         self._sink.on_connect_status_change(True)
 
-    def get_next_json_msg(self) -> str | None:
-        """Scans the buffer for a complete, brace-balanced JSON object. Returns the completeJSON string."""
-        brace_count = 0
-        start_index = -1
+    def _consume_json_msg(self) -> dict | None:
+        try:
+            # Try to decode an object from the current position
+            decoder = json.JSONDecoder()
+            json_obj, end_pos = decoder.raw_decode(self._buffer)
 
-        for i, char in enumerate(self._buffer):
-            if char == "{":
-                if brace_count <= 0:
-                    brace_count = 0
-                    start_index = i  # Mark the start of a new object
-                brace_count += 1
-            elif char == "}":
-                brace_count -= 1
-                if brace_count == 0 and start_index != -1:
-                    # Found a complete, top-level object
-                    json_str = self._buffer[start_index : i + 1]
-                    self._buffer = self._buffer[i + 1 :]
-                    return json_str
-
-        return None  # No complete object found
+            self._buffer = self._buffer[end_pos:]
+            # If successful, process the message
+            return json_obj
+        except json.JSONDecodeError:
+            # Not a complete JSON object yet, break and wait for more data
+            return None
 
     def data_received(self, data):
         self._buffer += data.decode("utf-8")
 
-        while (json_msg := self.get_next_json_msg()) is not None:
+        while (json_msg := self._consume_json_msg()) is not None:
             self._sink.on_json_message(json_msg)
 
     def connection_lost(self, exc):
@@ -263,28 +255,26 @@ class RgbwwController(RgbwwReceiver):
     def connected(self):
         return self._connected
 
-    def on_json_message(self, json_msg: str) -> None:
+    def on_json_message(self, json_msg: dict) -> None:
         # ANY data from the server resets the timer.
         self._reset_watchdog()
 
-        payload = json.loads(json_msg)
-
-        match payload["method"]:
+        match json_msg["method"]:
             case "color_event":
-                if "hsv" in payload["params"]:
-                    self.state.hue = payload["params"]["hsv"]["h"]
-                    self.state.saturation = payload["params"]["hsv"]["s"]
-                    self.state.color_temp = payload["params"]["hsv"]["ct"]
-                    self.state.brightness = payload["params"]["hsv"]["v"]
+                if "hsv" in json_msg["params"]:
+                    self.state.hue = json_msg["params"]["hsv"]["h"]
+                    self.state.saturation = json_msg["params"]["hsv"]["s"]
+                    self.state.color_temp = json_msg["params"]["hsv"]["ct"]
+                    self.state.brightness = json_msg["params"]["hsv"]["v"]
 
-                if "raw" in payload["params"]:
-                    self.state.raw_ww = payload["params"]["raw"]["ww"]
-                    self.state.raw_cw = payload["params"]["raw"]["cw"]
-                    self.state.raw_r = payload["params"]["raw"]["r"]
-                    self.state.raw_g = payload["params"]["raw"]["g"]
-                    self.state.raw_b = payload["params"]["raw"]["b"]
+                if "raw" in json_msg["params"]:
+                    self.state.raw_ww = json_msg["params"]["raw"]["ww"]
+                    self.state.raw_cw = json_msg["params"]["raw"]["cw"]
+                    self.state.raw_r = json_msg["params"]["raw"]["r"]
+                    self.state.raw_g = json_msg["params"]["raw"]["g"]
+                    self.state.raw_b = json_msg["params"]["raw"]["b"]
 
-                self.state.color_mode = payload["params"]["mode"]
+                self.state.color_mode = json_msg["params"]["mode"]
                 print(f"{self._host} - {self.state}")
 
                 for x in self._callbacks:

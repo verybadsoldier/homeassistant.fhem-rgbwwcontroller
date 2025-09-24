@@ -343,7 +343,7 @@ class RgbwwController(RgbwwReceiver):
         return self._info_cached
 
     @property
-    def info() -> dict | None:
+    def info(self) -> dict | None:
         return self._info_cached
 
     async def _send_http_post(self, endpoint: str, payload: dict[str, any]) -> None:

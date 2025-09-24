@@ -6,7 +6,8 @@
     "error": {
       "cannot_connect": "Failed to connect",
       "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "scan_no_controllers": "No controllers have been found in network {{network}}"
     },
     "progress": {
       "scanning": "Scanning for FHEM RGBWW Controllers..."

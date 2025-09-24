@@ -57,11 +57,7 @@ def scan(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwController]]:
         )
 
     return [_check_ip(str(ip)) for ip in network.hosts()]
-    # return asyncio.create_task(asyncio.gather(*tasks))
-    # results = await asyncio.gather(*tasks)
 
-    # Filter out None results
-    # return [res for res in results if res is not None]
 
 def scan_dummy(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwController]]:
     """Scans the given network for FHEM RGBWW Controller devices."""

@@ -24,7 +24,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.selector import TextSelector
+from homeassistant.helpers.selector import TextSelector, selector
 
 from . import controller_autodetect
 from .const import DOMAIN
@@ -49,30 +49,15 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
         super().__init__()
         self._scan_tasks: list[asyncio.Task] | None = None
         self._scan_monitor_task: asyncio.TaskGroup | None = None
-
-    def _show_menu(self) -> ConfigFlowResult:
-        """Show the initial menu."""
-        return self.async_show_menu(
-            step_id="user",
-            menu_options=["scan_form", "manual"],
-        )
+        self._scan_network: ipaddress.IPv4Network | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the user confirmation step."""
-        # Abort if an instance is already configured
-        if self._async_current_entries():
-            return self.async_abort(reason="single_instance_allowed")
-
-        # If user_input is not None, the user has clicked "Submit"
-        if user_input is not None:
-            # Create the config entry with an empty title and data
-            return self.async_create_entry(title="My Simple Integration", data={})
-
-        # Show the confirmation form to the user
-        # The description will be pulled from strings.json
-        return self._show_menu()
+        return self.async_show_menu(
+            step_id="user",
+            menu_options=["scan_form", "manual"],
+        )
 
     async def async_step_scan_form(
         self, user_input: dict[str, Any] | None = None
@@ -103,23 +88,12 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
         # Await all tasks to ensure they are fully completed
         await asyncio.gather(*self._scan_tasks)
 
-        # Find results if needed
-        return [t.result() for t in self._scan_tasks if t.result() is not None]
-
-        # Store results or move to the next step
-        self.data["results"] = results
-        self.hass.async_create_task(self.hass.config_entries.async_continue_flow(
-            self.flow_context["flow_id"],
-            "scan_finished"
-        ))
-
     async def async_step_scan_start(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if self._scan_tasks is None:
-            network = ipaddress.IPv4Network(user_input["ip_range"])
-            self._scan_tasks = [asyncio.create_task(x) for x in controller_autodetect.scan_dummy(network)]
-
+            self._scan_network = ipaddress.IPv4Network(user_input["ip_range"])
+            self._scan_tasks = [asyncio.create_task(x) for x in controller_autodetect.scan_dummy(self._scan_network)]
 
             self._scan_monitor_task = self.hass.async_create_task(self._monitor_progress())
 
@@ -133,9 +107,43 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_scan_finished(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        if not user_input:
-            return self.async_show_form(step_id="finish")
-        return self.async_create_entry(title="Some title", data={})
+        found_controllers = [t.result() for t in self._scan_tasks if t.result() is not None]
+
+        if not found_controllers:
+            return self.async_abort("scan_no_controllers", description_placeholders={"network": str(self._scan_network)})
+
+        controller_names = [f"{x.info['name']} ({x.host})" for x in found_controllers]
+
+        data_schema = vol.Schema({vol.Required(CONF_NAME): str,
+                                  vol.Required(CONF_HOST): selector({
+                                    "select": {
+                                        "options": controller_names,
+                                    }
+                                })})
+
+        return self.async_show_form(
+            step_id="finalize",
+            data_schema=data_schema,
+            errors={},
+        )
+
+    async def async_step_manual(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        data_schema = vol.Schema({vol.Required(CONF_NAME): str,
+                                  vol.Required(CONF_HOST): str})
+
+        return self.async_show_form(
+            step_id="finalize",
+            data_schema=data_schema,
+            errors={},
+        )
+
+    async def async_step_finalize(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None

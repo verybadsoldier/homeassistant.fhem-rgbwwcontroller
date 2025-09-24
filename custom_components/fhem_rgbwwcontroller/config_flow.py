@@ -47,13 +47,14 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self):
         super().__init__()
-        self._scan_task: asyncio.Task | None = None
+        self._scan_tasks: list[asyncio.Task] | None = None
+        self._scan_monitor_task: asyncio.TaskGroup | None = None
 
     def _show_menu(self) -> ConfigFlowResult:
         """Show the initial menu."""
         return self.async_show_menu(
             step_id="user",
-            menu_options=["scan", "manual"],
+            menu_options=["scan_form", "manual"],
         )
 
     async def async_step_user(
@@ -73,11 +74,11 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
         # The description will be pulled from strings.json
         return self._show_menu()
 
-    async def async_step_scan(
+    async def async_step_scan_form(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         return self.async_show_form(
-            step_id="start_scan",
+            step_id="scan_start",
             data_schema=vol.Schema(
                 {
                     vol.Required("ip_range", default="192.168.2.0/24"): TextSelector(),
@@ -86,18 +87,48 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
             errors={},
         )
 
-    async def async_step_start_scan(
+    async def _monitor_progress(self):
+        """Monitors the progress of the tasks and updates the progress bar."""
+        while True:
+            num_done_tasks = len([x for x in self._scan_tasks if x.done()])
+
+            if num_done_tasks < len(self._scan_tasks):
+               self.async_update_progress(num_done_tasks / float(len(self._scan_tasks)))
+            else:
+                break
+
+            # Wait for one second before the next update
+            await asyncio.sleep(1)
+
+        # Await all tasks to ensure they are fully completed
+        await asyncio.gather(*self._scan_tasks)
+
+        # Find results if needed
+        return [t.result() for t in self._scan_tasks if t.result() is not None]
+
+        # Store results or move to the next step
+        self.data["results"] = results
+        self.hass.async_create_task(self.hass.config_entries.async_continue_flow(
+            self.flow_context["flow_id"],
+            "scan_finished"
+        ))
+
+    async def async_step_scan_start(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        network = ipaddress.IPv4Network(user_input["ip_range"])
-        tasks = controller_autodetect.scan_tasks(network)
+        if self._scan_tasks is None:
+            network = ipaddress.IPv4Network(user_input["ip_range"])
+            self._scan_tasks = [asyncio.create_task(x) for x in controller_autodetect.scan_dummy(network)]
 
-        return self.async_show_progress(
-            progress_action="scanning",
-            progress_task=self._scan_task,
-        )
 
-        return self.async_show_progress_done(next_step_id="scan_finished")
+            self._scan_monitor_task = self.hass.async_create_task(self._monitor_progress())
+
+            return self.async_show_progress(
+                progress_action="scanning",
+                progress_task=self._scan_monitor_task,
+            )
+        else:
+            return self.async_show_progress_done(next_step_id="scan_finished")
 
     async def async_step_scan_finished(
         self, user_input: dict[str, Any] | None = None

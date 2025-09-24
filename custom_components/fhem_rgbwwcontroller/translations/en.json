@@ -8,12 +8,15 @@
       "invalid_auth": "Invalid authentication",
       "unknown": "Unexpected error"
     },
+    "progress": {
+      "scanning": "Scanning for FHEM RGBWW Controllers..."
+    },
     "step": {
       "user": {
         "title": "Setup FHEM RGBWW Controller",
         "description": "Use the configuration of the integration to add RGBWW device.",
         "menu_options": {
-          "scan": "Automatic discovery of controllers",
+          "scan_form": "Automatic discovery of controllers",
           "manual": "Manual"
         },
         "menu_option_descriptions": {

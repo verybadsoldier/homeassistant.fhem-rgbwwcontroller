@@ -49,7 +49,7 @@ def get_scan_range() -> ipaddress.IPv4Network | None:
         return None
 
 
-async def scan(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwController]]:
+def scan(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwController]]:
     """Scans the given network for FHEM RGBWW Controller devices."""
     if network.prefixlen < 13:
         raise ValueError(
@@ -63,6 +63,22 @@ async def scan(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwControl
     # Filter out None results
     # return [res for res in results if res is not None]
 
+def scan_dummy(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwController]]:
+    """Scans the given network for FHEM RGBWW Controller devices."""
+    if network.prefixlen < 13:
+        raise ValueError(
+            "Network prefix is too broad. Please use a subnet mask of /12 or smaller."
+        )
+
+    return [_check_ip_dummy(str(ip)) for ip in network.hosts()]
+
+async def _check_ip_dummy(ip: str) -> RgbwwController | None:
+    import random
+    await asyncio.sleep(random.randint(2, 20))
+    if random.choice([True, False]):
+        return None
+    else:
+        return RgbwwController(ip)
 
 async def _check_ip(ip: str) -> RgbwwController | None:
     controller = RgbwwController(ip)

@@ -1,3 +1,5 @@
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 import enum
 import httpx
@@ -13,51 +15,50 @@ class _HttpMethod(enum.Enum):
 
 class _TcpReceiver(asyncio.Protocol):
     def __init__(
-        self, receive_callback: callable[str], on_con_lost: asyncio.Future
+        self, receive_callback: Callable[[str], None], on_con_lost: asyncio.Future
     ) -> None:
         self._receive_callback = receive_callback
         self.on_con_lost = on_con_lost
-        self._buffer: list[bytes] = []
+        self._buffer: str = ""
 
     def connection_made(self, transport):
         pass
         # transport.write(self.message.encode())
         # print("Data sent: {!r}".format(self.message))
 
-    def _find_complete_json(self) -> tuple[str | None, list[bytes]]:
+    def _find_complete_json(self) -> tuple[str | None, str]:
         """
         Scans the buffer for a complete, brace-balanced JSON object.
         Returns the complete JSON string and the remaining buffer.
         """
         brace_count = 0
-        in_string = False
         start_index = -1
 
         for i, char in enumerate(self._buffer):
-            if char == '"' and (i == 0 or self._buffer[i - 1] != "\\"):
-                # Toggle in_string state, handling escaped quotes
-                in_string = not in_string
+            if char == "{":
+                if brace_count <= 0:
+                    brace_count = 0
+                    start_index = i  # Mark the start of a new object
+                brace_count += 1
+            elif char == "}":
+                brace_count -= 1
+                if brace_count == 0 and start_index != -1:
+                    # Found a complete, top-level object
+                    json_str = self._buffer[start_index : i + 1]
+                    remaining_buffer = self._buffer[i + 1 :]
+                    return json_str, remaining_buffer
 
-            if not in_string:
-                if char == "{":
-                    if brace_count == 0:
-                        start_index = i  # Mark the start of a new object
-                    brace_count += 1
-                elif char == "}":
-                    brace_count -= 1
-                    if brace_count == 0 and start_index != -1:
-                        # Found a complete, top-level object
-                        json_str = self._buffer[start_index : i + 1]
-                        remaining_buffer = self._buffer[i + 1 :]
-                        return json_str, remaining_buffer
-
-        return None, self.buffer  # No complete object found
+        return None, self._buffer  # No complete object found
 
     def data_received(self, data):
-        self._buffer += data
-        json_str, self._buffer = self._find_complete_json()
-        if json_str is not None:
-            self._receive_callback(json_str)
+        self._buffer += data.decode("utf-8")
+
+        while True:
+            json_str, self._buffer = self._find_complete_json()
+            if json_str is not None:
+                self._receive_callback(json_str)
+            else:
+                break
 
     def connection_lost(self, exc):
         print("The server closed the connection")
@@ -71,6 +72,11 @@ class _State:
     saturation: int
     brightness: int
     color_mode: Literal["raw", "hsv"]
+    raw_r: int
+    raw_g: int
+    raw_b: int
+    raw_ww: int
+    raw_cw: int
 
 
 class RgbwwController:
@@ -80,28 +86,79 @@ class RgbwwController:
 
     def __init__(self, host: str) -> None:
         self._host = host
-        self.state = _State()
+        self.state = _State(0, 0, 0, 0, "raw", 0, 0, 0, 0, 0)
 
-    async def set_hsv(self, hue: int | None) -> None:
-        data = {
-            "hsv": {"h": 100, "s": 100, "v": 100, "ct": 2700},
-            "cmd": "",  # transition type
-            "t": 2.0,  # fade time
-            "s": 1.0,  # fade speed
-            "q": 1,
-        }
+    async def set_hsv(
+        self,
+        hue: int | None = None,
+        saturation: int | None = None,
+        brightness: int | None = None,
+    ) -> None:
+        # data = {
+        #    "hsv": {"h": 100, "s": 100, "v": 100, "ct": 2700},
+        #    "cmd": "",  # transition type
+        #    "t": 2.0,  # fade time
+        #    "s": 1.0,  # fade speed
+        #    "q": 1,
+        # }
+        data: dict[str, any] = {"hsv": {}}
 
         if hue is not None:
             data["hsv"]["h"] = hue
 
+        if brightness is not None:
+            data["hsv"]["v"] = brightness
+
+        if saturation is not None:
+            data["hsv"]["s"] = saturation
+
         await self._send_http_post("color", data)
 
-    async def _on_json_received(self, json_str: str):
+    async def set_raw(
+        self,
+        r: int | None = None,
+        g: int | None = None,
+        b: int | None = None,
+        cw: int | None = None,
+        ww: int | None = None,
+    ) -> None:
+        data: dict[str, any] = {"raw": {}}
+
+        if r is not None:
+            data["raw"]["r"] = r
+
+        if g is not None:
+            data["raw"]["g"] = g
+
+        if b is not None:
+            data["raw"]["b"] = b
+
+        if cw is not None:
+            data["raw"]["cw"] = cw
+
+        if ww is not None:
+            data["raw"]["ww"] = ww
+
+        await self._send_http_post("color", data)
+
+    def _on_json_received(self, json_str: str):
         payload = json.loads(json_str)
 
         match payload["method"]:
             case "color_event":
-                ...
+                self.state.hue = payload["params"]["hsv"]["h"]
+                self.state.saturation = payload["params"]["hsv"]["s"]
+                self.state.color_temp = payload["params"]["hsv"]["ct"]
+                self.state.brightness = payload["params"]["hsv"]["v"]
+
+                self.state.raw_ww = payload["params"]["raw"]["ww"]
+                self.state.raw_cw = payload["params"]["raw"]["cw"]
+                self.state.raw_r = payload["params"]["raw"]["r"]
+                self.state.raw_g = payload["params"]["raw"]["g"]
+                self.state.raw_b = payload["params"]["raw"]["b"]
+
+                self.state.color_mode = payload["params"]["mode"]
+                print(self.state)
             # my $colorMode = "raw";
             # if ( exists $obj->{params}->{hsv} ) {
             #    $colorMode = "hsv";
@@ -144,19 +201,20 @@ class RgbwwController:
             on_con_lost = loop.create_future()
 
             transport, protocol = await loop.create_connection(
-                lambda: _TcpReceiver(self._on_data_received, on_con_lost),
+                lambda: _TcpReceiver(self._on_json_received, on_con_lost),
                 self._host,
                 RgbwwController._TCP_PORT,
             )
+            break
 
             # Wait until the protocol signals that the connection
             # is lost and close the transport.
-            try:
-                await on_con_lost
-            finally:
-                transport.close()
+            # try:
+            #    await on_con_lost
+            # finally:
+            #    transport.close()
 
-            await asyncio.sleep(60)
+            # await asyncio.sleep(60)
 
     async def _send_http_post(self, endpoint: str, payload: dict[str, any]) -> None:
         headers = {
@@ -174,3 +232,15 @@ class RgbwwController:
 
             if r.status_code != 200:
                 raise RuntimeError("HTTP error response")
+
+
+async def main():
+    a = RgbwwController("192.168.2.53")
+    await a.connect()
+
+    await a.set_hsv(brightness=100)
+
+    await asyncio.sleep(120)
+
+
+# asyncio.run(main())

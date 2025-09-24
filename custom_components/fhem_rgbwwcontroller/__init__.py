@@ -8,26 +8,28 @@ from homeassistant.core import HomeAssistant
 
 _PLATFORMS: list[Platform] = [Platform.LIGHT]
 
-# TODO Create ConfigEntry type alias with API object
-# TODO Rename type alias and update all entry annotations
-#type New_NameConfigEntry = ConfigEntry[MyApi]  # noqa: F821
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the FHEM RGBWW Controller component."""
+    # This function is the initial entry point. For a UI-only integration,
+    # it simply needs to return True to signal that the component is loaded and ready.
+    return True
 
 
-# TODO Update entry annotation
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up FHEM RGBWW Controller from a config entry."""
-
-    # TODO 1. Create API instance
-    # TODO 2. Validate the API connection (and authentication)
-    # TODO 3. Store an API object for your platforms to access
+    # Your TODOs for creating and storing an API instance are correct.
+    # This is where you would connect to your device.
+    # For now, we'll assume no connection is needed for testing.
     # entry.runtime_data = MyAPI(...)
 
+    # This forwards the setup to your light.py file.
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
 
     return True
 
 
-# TODO Update entry annotation
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry ) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    # This function is required for reloading and removing the integration.
     return await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)

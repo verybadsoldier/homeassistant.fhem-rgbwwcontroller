@@ -1,5 +1,6 @@
 # noqa: D102
 from dataclasses import dataclass
+from datetime import timedelta
 import enum
 import httpx
 import asyncio
@@ -102,6 +103,7 @@ class RgbwwController(RgbwwReceiver):
         self._connection_task: asyncio.Task | None = None
 
         self._on_con_lost: asyncio.Future | None = None
+        self._on_con_established: asyncio.Future | None = None
         self._callbacks: list[RgbwwStateUpdate] = []
         self._transport: asyncio.Transport | None = None
         self._watchdog_handle: asyncio.TimerHandle | None = None
@@ -124,6 +126,7 @@ class RgbwwController(RgbwwReceiver):
             try:
                 loop = asyncio.get_running_loop()
                 self._on_con_lost = loop.create_future()
+                self._on_con_established = loop.create_future()
 
                 self._transport, _ = await loop.create_connection(
                     lambda: _TcpReceiver(
@@ -156,6 +159,7 @@ class RgbwwController(RgbwwReceiver):
 
     def on_connect_status_change(self, connected: bool) -> None:
         if connected:
+            self._on_con_established.set_result(None)
             self._reset_watchdog()
         else:
             self._watchdog_handle.cancel()
@@ -174,6 +178,13 @@ class RgbwwController(RgbwwReceiver):
         self._connection_task = asyncio.create_task(
             self._run_connection_task(), name="fhem_rgbwwcontroller_connection"
         )
+
+    async def connect_wait_for_connection(
+        self, timeout: timedelta = timedelta(seconds=10)
+    ) -> None:
+        """Connect to the controller (including reconnects)."""
+        self.connect()
+        await asyncio.wait_for(self._on_con_established, timeout)
 
     async def disconnect(self):
         if self._transport is None:
@@ -316,6 +327,10 @@ class RgbwwController(RgbwwReceiver):
             # Log3( $name, 3, "$hash->{NAME}: EspLedController_ProcessRead: Unknown message type: " . $obj->{method} );
             # }
 
+    async def get_info(self) -> dict:
+        json_data = await self._send_http_get("info")
+        return json.loads(json_data)
+
     async def _send_http_post(self, endpoint: str, payload: dict[str, any]) -> None:
         headers = {
             "user-agent": "homeassistant-fhem_rgbwwcontroller",
@@ -330,12 +345,29 @@ class RgbwwController(RgbwwReceiver):
                 headers=headers,
             )
 
-            if r.status_code != 200:
-                raise RuntimeError("HTTP error response")
+            r.raise_for_status()
+
+    async def _send_http_get(self, endpoint: str) -> str:
+        headers = {
+            "user-agent": "homeassistant-fhem_rgbwwcontroller",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"http://{self._host}/{endpoint}",
+                headers=headers,
+            )
+
+            r.raise_for_status()
+
+            return r.text
 
 
 async def main():
-    a = RgbwwController("192.168.2.53", None)
+    a = RgbwwController("192.168.2.53")
+    info = await a.get_info()
     await a.connect()
 
     await a.set_hsv(brightness=100)
@@ -344,4 +376,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.get_event_loop().run_forever(main())
+    asyncio.run(main())

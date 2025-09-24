@@ -1,4 +1,6 @@
 from typing import Any, cast
+
+from homeassistant.helpers.device_registry import DeviceInfo
 from .rgbww_controller import RgbwwController, RgbwwStateUpdate
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -39,8 +41,8 @@ async def async_setup_entry(
     rgb = RgbwwLight(
         hass,
         controller,
-        "id." + entry.data[CONF_NAME],
-        entry.data[CONF_NAME],
+        entry.unique_id,
+        entry.title,
         entry.data[CONF_HOST],
     )
 
@@ -61,7 +63,7 @@ class RgbwwLight(LightEntity):
         hass: HomeAssistant,
         controller: RgbwwController,
         unique_id: str,
-        device_name: str,
+        title: str,
         host: str,
     ) -> None:
         """Initialize the light."""
@@ -69,7 +71,7 @@ class RgbwwLight(LightEntity):
         self._hass = hass
         self._host = host
         self._attr_unique_id = unique_id
-        self._attr_name = device_name
+        self._attr_name = title
 
         self._attr_supported_color_modes = (
             ColorMode.HS,
@@ -82,6 +84,18 @@ class RgbwwLight(LightEntity):
         self._attr_available = controller.connected
         controller.register_callback(self)
         self._controller = controller
+
+        # --- ENTITY AND DEVICE LINKING ---
+        # This is where the magic happens.
+        self._attr_unique_id = f"{unique_id}_light"
+        self._attr_name = f"{title} Light"
+
+        # This `device_info` block links the entity to the device you created
+        # in __init__.py. The `identifiers` MUST match exactly.
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, unique_id)},
+        )
+        # --- END LINKING ---
 
     def on_update_hsv(self, h: int | None, s: int | None, v: int | None) -> None:
         if h is not None:

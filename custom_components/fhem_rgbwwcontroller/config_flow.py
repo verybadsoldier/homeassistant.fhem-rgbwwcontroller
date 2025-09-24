@@ -5,8 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from httpx import HTTPError
 import voluptuous as vol
 
+from config.custom_components.fhem_rgbwwcontroller.rgbww_controller import (
+    RgbwwController,
+)
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -46,7 +50,7 @@ class PlaceholderHub:
         return True
 
 
-class ConfigFlow(ConfigFlow, domain=DOMAIN):
+class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for FHEM RGBWW Controller."""
 
     VERSION = 1
@@ -57,7 +61,19 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(title=user_input["name"], data=user_input)
+            host = user_input[CONF_HOST]
+            controller = RgbwwController(host)
+
+            try:
+                info = await controller.get_info()
+
+                await self.async_set_unique_id(info["connection"]["mac"])
+
+                return self.async_create_entry(
+                    title=user_input["name"], data=user_input
+                )
+            except HTTPError:
+                errors["host"] = f"Cannot retrieve MAC address from host {host}"
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors

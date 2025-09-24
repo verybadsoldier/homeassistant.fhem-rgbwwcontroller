@@ -1,4 +1,7 @@
 # noqa: D102
+import ipaddress
+import netifaces
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 import enum
@@ -20,7 +23,7 @@ class _HttpMethod(enum.Enum):
 class RgbwwStateUpdate(Protocol):
     def on_update_hsv(h: int | None, s: int | None, v: int | None) -> None: ...
     def on_connection_update(connected: bool) -> None: ...
-    def on_animation_finished(connected: bool) -> None: ...
+    def on_transition_finished(name: str, requeued: bool) -> None: ...
     def on_sync_status(connected: bool) -> None: ...
 
 
@@ -72,7 +75,10 @@ class _TcpReceiver(asyncio.Protocol):
     def connection_lost(self, exc):
         _logger.error("%s - Connection lost: %s", self._host, exc)
         self._sink.on_connect_status_change(False)
-        self.on_con_lost.set_result(True)
+
+        if not self.on_con_lost.cancelled():
+            self.on_con_lost.set_result(True)
+
         self._buffer = ""
 
 
@@ -97,10 +103,11 @@ class RgbwwController(RgbwwReceiver):
     TIMEOUT = 70
 
     def __init__(self, host: str) -> None:
-        self._host = host
+        self.host = host
         self._connected = False
         self.state = _State(0, 0, 0, 0, "raw", 0, 0, 0, 0, 0)
         self._connection_task: asyncio.Task | None = None
+        self._info_cached: dict | None = None
 
         self._on_con_lost: asyncio.Future | None = None
         self._on_con_established: asyncio.Future | None = None
@@ -130,17 +137,17 @@ class RgbwwController(RgbwwReceiver):
 
                 self._transport, _ = await loop.create_connection(
                     lambda: _TcpReceiver(
-                        self._host,
+                        self.host,
                         self,
                         self._on_con_lost,
                     ),
-                    self._host,
+                    self.host,
                     RgbwwController._TCP_PORT,
                 )
                 # Most of the time, the task will be waiting here
                 await self._on_con_lost
             except Exception as e:
-                _logger.error("%s - Connection error: %s", self._host, e)
+                _logger.error("%s - Connection error: %s", self.host, e)
             await asyncio.sleep(60)
 
     def register_callback(self, rcv: RgbwwStateUpdate) -> None:
@@ -190,14 +197,14 @@ class RgbwwController(RgbwwReceiver):
         if self._transport is None:
             return
 
-        _logger.error("%s - Disconnecting", self._host)
+        _logger.error("%s - Disconnecting", self.host)
         self._connection_task.cancel()
         self._transport.close()
 
     def _timeout_occurred(self):
         _logger.warning(
             "%s - ❌ Watchdog timeout! No message received for %s seconds. Closing the connection.",
-            self._host,
+            self.host,
             RgbwwController.TIMEOUT,
         )
 
@@ -286,7 +293,7 @@ class RgbwwController(RgbwwReceiver):
                     self.state.raw_b = json_msg["params"]["raw"]["b"]
 
                 self.state.color_mode = json_msg["params"]["mode"]
-                print(f"{self._host} - {self.state}")
+                print(f"{self.host} - {self.state}")
 
                 for x in self._callbacks:
                     x.on_update_hsv(
@@ -302,7 +309,10 @@ class RgbwwController(RgbwwReceiver):
             # }
 
             case "transition_finished":
-                ...
+                for x in self._callbacks:
+                    x.on_transition_finished(
+                        json_msg["params"]["name"], json_msg["params"]["requeued"]
+                    )
             # elsif ( $obj->{method} eq "transition_finished" ) {
             # my $msg = $obj->{params}{name} . "," . ($obj->{params}{requeued} ? "requeued" : "finished");
             # readingsSingleUpdate( $hash, "tranisitionFinished", $msg, 1 );
@@ -329,7 +339,12 @@ class RgbwwController(RgbwwReceiver):
 
     async def get_info(self) -> dict:
         json_data = await self._send_http_get("info")
-        return json.loads(json_data)
+        self._info_cached = json.loads(json_data)
+        return self._info_cached
+
+    @property
+    def info() -> dict | None:
+        return self._info_cached
 
     async def _send_http_post(self, endpoint: str, payload: dict[str, any]) -> None:
         headers = {
@@ -340,7 +355,7 @@ class RgbwwController(RgbwwReceiver):
 
         async with httpx.AsyncClient() as client:
             r = await client.post(
-                f"http://{self._host}/{endpoint}",
+                f"http://{self.host}/{endpoint}",
                 json=payload,
                 headers=headers,
             )
@@ -356,13 +371,97 @@ class RgbwwController(RgbwwReceiver):
 
         async with httpx.AsyncClient() as client:
             r = await client.get(
-                f"http://{self._host}/{endpoint}",
+                f"http://{self.host}/{endpoint}",
                 headers=headers,
             )
 
             r.raise_for_status()
 
             return r.text
+
+
+class AutoDetector:
+    @staticmethod
+    def get_scan_range() -> ipaddress.IPv4Network | None:
+        """
+        Finds the active network interface and returns its IP range.
+        """
+        try:
+            # Find the default gateway to determine the active interface
+            gateways = netifaces.gateways()
+            default_gateway = gateways.get("default", {}).get(netifaces.AF_INET)
+
+            if not default_gateway:
+                _logger.error(
+                    "❌ Could not find the default gateway. Please check your network connection."
+                )
+                return None
+
+            interface = default_gateway[1]
+            _logger.info(f"🌐 Found active interface: {interface}")
+
+            # Get the addresses for the found interface
+            addresses = netifaces.ifaddresses(interface)
+            ipv4_info = addresses.get(netifaces.AF_INET)
+
+            if not ipv4_info:
+                _logger.info(
+                    "❌ No IPv4 address found for interface %s.", str(interface)
+                )
+                return None
+
+            # Extract IP and netmask
+            ip_address = ipv4_info[0]["addr"]
+            netmask = ipv4_info[0]["netmask"]
+
+            # Create a network object from the IP and netmask
+            # The 'strict=False' part handles cases where the IP might be a network/broadcast address
+            network = ipaddress.IPv4Network(f"{ip_address}/{netmask}", strict=False)
+            return network
+
+        except Exception as e:
+            _logger.exception(
+                "An error occurred when detecting the IP range.", exc_info=e
+            )
+            return None
+
+    @staticmethod
+    async def scan(network: ipaddress.IPv4Network) -> list[RgbwwController]:
+        tasks = []
+
+        for ip in network.hosts():
+            tasks.append(AutoDetector._check_ip(str(ip)))
+
+        results = await asyncio.gather(*tasks)
+
+        found_devices = [res for res in results if res is not None]
+
+        return found_devices
+
+    @staticmethod
+    async def _check_ip(ip: str) -> RgbwwController | None:
+        controller = RgbwwController(ip)
+
+        try:
+            info = await controller.get_info()
+            mac = info["connection"]["mac"]
+            print(f"Found device at {ip} with MAC {mac}")
+            return controller
+        except (httpx.HTTPError, asyncio.TimeoutError):
+            pass
+
+
+async def main_autodetect():
+    now = time.monotonic()
+    # mask = AutoDetector.get_scan_range()
+
+    network = ipaddress.IPv4Network("192.168.2.0/24")
+    devices = await AutoDetector.scan(network)
+    now2 = time.monotonic()
+    print(f"Found {len(devices)} devices:")
+
+    for device in devices:
+        print(f"- {device.host}")
 
 
 async def main():
@@ -376,4 +475,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main_autodetect())

@@ -6,20 +6,22 @@ from httpx import HTTPStatusError
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from .const import DOMAIN
 from .rgbww_controller import RgbwwController
-from homeassistant.helpers import device_registry
+from homeassistant.helpers import device_registry, entity_platform
+from homeassistant.helpers.typing import ConfigType
+from homeassistant.helpers import (
+    config_validation as cv,
+    service,
+)
+
 
 _PLATFORMS: list[Platform] = [Platform.LIGHT]
 
-
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up the FHEM RGBWW Controller component."""
-    # This function is the initial entry point. For a UI-only integration,
-    # it simply needs to return True to signal that the component is loaded and ready.
-    return True
+ATTR_NAME = "name"
+DEFAULT_NAME = "World"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -39,10 +41,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Wir übergeben die entry.unique_id (also die IP) für eine eindeutige Identifikation
     controller = RgbwwController(host)
 
-    hass.data[DOMAIN][entry.entry_id] = controller
+    entry.runtime_data = controller
 
     await controller.connect()
 
+    info = await controller.get_info()
     # --- DEVICE REGISTRATION ---
     # This is the new part. We create a device in the registry.
     dev_reg = device_registry.async_get(hass)
@@ -52,7 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         name=entry.title,  # The name the user gave in the config flow
         manufacturer="Homebrew Hardware",
         model="FHEM RGBWW LED Controller",  # Replace with actual model
-        # sw_version=controller.firmware_version,  # Assumes your controller has this property
+        sw_version=f"{info['git_version']} (WebApp:{info['webapp_version']})",
     )
     # --- END DEVICE REGISTRATION ---
 

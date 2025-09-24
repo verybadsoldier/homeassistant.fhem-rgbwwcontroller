@@ -1,14 +1,15 @@
 from typing import Any, cast
 
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.device_registry import DeviceInfo
-from .rgbww_controller import RgbwwController, RgbwwStateUpdate
+from homeassistant.helpers.typing import ConfigType
+from .rgbww_controller import RgbwwController
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
 from homeassistant.components.light import (
-    ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_RGBWW_COLOR,
     ATTR_HS_COLOR,
@@ -19,15 +20,21 @@ from homeassistant.components.light import (
     LightEntityFeature,
 )
 
-import voluptuous as vol
 
 # Import the device class from the component that you want to support
 import homeassistant.helpers.config_validation as cv
-from homeassistant.components.light import ATTR_BRIGHTNESS, PLATFORM_SCHEMA, LightEntity
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, CONF_NAME
+from homeassistant.components.light import LightEntity
+from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+import voluptuous as vol
+
+SERVICE_SET_HSV_ADV = "set_hsv_advanced"
+
+
+def set_hsv_advanced(self, call: ServiceCall) -> None:
+    print("hhlo")
+    if call.data["hsv_command_string"] == "fade":
+        print("as")
 
 
 async def async_setup_entry(
@@ -36,17 +43,23 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Abode light devices."""
-    controller = cast(RgbwwController, hass.data[DOMAIN][entry.entry_id])
+    controller = cast(RgbwwController, entry.runtime_data)
 
     rgb = RgbwwLight(
         hass,
         controller,
         entry.unique_id,
         entry.title,
-        entry.data[CONF_HOST],
     )
 
     async_add_entities((rgb,))
+
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        SERVICE_SET_HSV_ADV,
+        {vol.Required("hsv_command_string"): cv.string},
+        set_hsv_advanced,
+    )
 
 
 # we implement RgbwwStateUpdate but we cannot derive from here due to metaclass error
@@ -64,12 +77,10 @@ class RgbwwLight(LightEntity):
         controller: RgbwwController,
         unique_id: str,
         name: str,
-        host: str,
     ) -> None:
         """Initialize the light."""
         super().__init__()
         self._hass = hass
-        self._host = host
         self._attr_unique_id = unique_id + "_light"
         self._attr_name = name + " Light"
 
@@ -82,13 +93,13 @@ class RgbwwLight(LightEntity):
         self._attr_color_mode = {ColorMode.HS}
 
         self._attr_available = controller.connected
-        controller.register_callback(self)
+
         self._controller = controller
 
         # --- ENTITY AND DEVICE LINKING ---
         # This is where the magic happens.
-        self._attr_unique_id = f"{unique_id}_light"
-        self._attr_name = f"{title} Light"
+        self._attr_unique_id = f"{unique_id}_lightunique"
+        self._attr_name = f"{name}"  # "light" prefix will be added automatically
 
         # This `device_info` block links the entity to the device you created
         # in __init__.py. The `identifiers` MUST match exactly.
@@ -96,6 +107,15 @@ class RgbwwLight(LightEntity):
             identifiers={(DOMAIN, unique_id)},
         )
         # --- END LINKING ---
+
+    async def async_added_to_hass(self) -> None:
+        self._controller.register_callback(self)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from the events."""
+        self._controller.unregister_callback(self)
+
+        await super().async_will_remove_from_hass()
 
     def on_update_hsv(self, h: int | None, s: int | None, v: int | None) -> None:
         if h is not None:
@@ -138,12 +158,14 @@ class RgbwwLight(LightEntity):
         """Turn the entity off."""
         await self._controller.set_hsv(brightness=0)
 
-    async def animation_finished(self):
+    def on_transition_finished(self, name: str, requeued: bool) -> None:
         event_data = {
-            "device_id": "my-device-id",
-            "type": "motion_detected",
+            "device_id": "rgbwwid",
+            "type": "transition_finished",
+            "name": name,
+            "requeued": requeued,
         }
-        self._hass.bus.async_fire("mydomain_event", event_data)
+        self._hass.bus.async_fire("transition_finished", event_data)
 
 
 # class MyReceiver(RgbwwStateUpdate):

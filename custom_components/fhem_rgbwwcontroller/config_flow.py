@@ -16,11 +16,13 @@ from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
     ConfigSubentryFlow,
+    OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.selector import TextSelector
 
 from .const import DOMAIN
 
@@ -33,21 +35,6 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_HOST): str,
     }
 )
-
-
-class PlaceholderHub:
-    """Placeholder class to make tests pass.
-
-    TODO Remove this placeholder class and replace with things from your PyPI package.
-    """
-
-    def __init__(self, host: str) -> None:
-        """Initialize."""
-        self.host = host
-
-    async def authenticate(self, username: str, password: str) -> bool:
-        """Test if we can authenticate with the host."""
-        return True
 
 
 class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -67,8 +54,11 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 info = await controller.get_info()
 
-                await self.async_set_unique_id(info["connection"]["mac"])
-                self._abort_if_unique_id_configured()
+                # the unique_id will not be matching the device MAC anymore
+                # after replacing the device as the unique_id won't be updated
+                mac = info["connection"]["mac"]
+                await self.async_set_unique_id(mac)
+                self._abort_if_unique_id_configured(f"Controller with MAC '{mac}'")
 
                 return self.async_create_entry(
                     title=user_input[CONF_NAME], data=user_input
@@ -80,10 +70,42 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle reconfiguration of the integration."""
+        cur_data = self._get_reconfigure_entry().data
+        errors: dict[str, str] = {}
+        if user_input:
+            host = user_input[CONF_HOST]
+            controller = RgbwwController(host)
+            try:
+                # just check if reachable
+                _ = await controller.get_info()
+            except HTTPError:
+                errors[CONF_HOST] = f"Cannot retrieve MAC address from host {host}"
+                cur_data = user_input
+            else:
+                # to support the scenario that a physical device has been replaced by another device
+                # we don't change the unique_id and we allow it to differ from the MAC
+                # mac = info["connection"]["mac"]
+                # await self.async_set_unique_id(mac)
+                # self._abort_if_unique_id_mismatch(reason="wrong_account")
 
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
+                return self.async_update_reload_and_abort(
+                    self._get_reconfigure_entry(),
+                    data_updates=user_input,
+                    reason="Host changed successfully.",
+                )
 
-
-class InvalidAuth(HomeAssistantError):
-    """Error to indicate there is invalid auth."""
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_HOST, default=cur_data[CONF_HOST]
+                    ): TextSelector(),
+                }
+            ),
+            errors=errors,
+        )

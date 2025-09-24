@@ -1,0 +1,32 @@
+set_hsv_advanced_old:
+  target:
+    entity:
+      domain: light
+  fields:
+    hsv_command_string:
+      example: "+20,100,20 2 :setHueAnim"
+      required: true
+      selector:
+        text:
+    hsv_command_string2:
+      example: "+20,100,20 2 :setHueAnim"
+      required: true
+      selector:
+        text:
+
+set_hsv_advanced:
+  name: Set a list of HSV Colors
+  description: >
+    Sets a sequence of colors using a list of HSV values.
+    The list must not be empty.
+  fields:
+    hsv_list:
+      name: HSV Color List
+      description: "A list of HSV objects. Each value can be 0-100 or a relative string like '+1000'."
+      required: true
+      selector:
+        object:
+      example:
+        - h: 50
+          s: '+1500'
+        - v: 99

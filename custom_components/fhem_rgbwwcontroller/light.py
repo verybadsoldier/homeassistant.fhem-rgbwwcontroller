@@ -1,7 +1,5 @@
-from typing import Any
-from .rgbww_controller import (
-    RgbwwController,
-)
+from typing import Any, cast
+from .rgbww_controller import RgbwwController, RgbwwStateUpdate
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -36,21 +34,21 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Abode light devices."""
+    controller = cast(RgbwwController, hass.data[DOMAIN][entry.entry_id])
 
-    async_add_entities(
-        (
-            RgbwwLight(
-                "id." + entry.data[CONF_NAME],
-                entry.data[CONF_NAME],
-                entry.data[CONF_HOST],
-            ),
-        )
+    rgb = RgbwwLight(
+        hass,
+        controller,
+        "id." + entry.data[CONF_NAME],
+        entry.data[CONF_NAME],
+        entry.data[CONF_HOST],
     )
 
+    async_add_entities((rgb,))
 
+
+# we implement RgbwwStateUpdate but we cannot derive from here due to metaclass error
 class RgbwwLight(LightEntity):
-    """Representation of a demo light."""
-
     _attr_has_entity_name = True
     _attr_name = None
     _attr_should_poll = False
@@ -58,27 +56,98 @@ class RgbwwLight(LightEntity):
     _attr_max_color_temp_kelvin = DEFAULT_MAX_KELVIN
     _attr_min_color_temp_kelvin = DEFAULT_MIN_KELVIN
 
-    def __init__(self, unique_id: str, device_name: str, host: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        controller: RgbwwController,
+        unique_id: str,
+        device_name: str,
+        host: str,
+    ) -> None:
         """Initialize the light."""
         super().__init__()
+        self._hass = hass
         self._host = host
+        self._attr_unique_id = unique_id
+        self._attr_name = device_name
 
-        self._attr_supported_color_modes = (ColorMode.XY,)
+        self._attr_supported_color_modes = (
+            ColorMode.HS,
+            ColorMode.RGBWW,
+            ColorMode.COLOR_TEMP,
+        )
         self._attr_supported_features = LightEntityFeature.TRANSITION
-        self._attr_color_mode = ColorMode.HS
-        self._controller = RgbwwController(self._host)
+        self._attr_color_mode = {ColorMode.HS}
+
+        self._attr_available = controller.connected
+        controller.register_callback(self)
+        self._controller = controller
+
+    def on_update_hsv(self, h: int | None, s: int | None, v: int | None) -> None:
+        if h is not None:
+            self._attr_hs_color = (h, s)
+
+        if v is not None:
+            self._attr_brightness = (v / 100.0) * 255
+
+        self._attr_is_on = v > 0
+
+        self.async_write_ha_state()
+
+    # protocol rgbww state
+    def on_connection_update(self, connected: bool) -> None:
+        self._attr_available = connected
+
+        self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
         if (rgbww := kwargs.get(ATTR_RGBWW_COLOR)) is not None:
             await self._controller.set_raw(*rgbww)
         elif (hs := kwargs.get(ATTR_HS_COLOR)) is not None:
-            await self._controller.set_hsv(hue=hs[0], saturation=hs[1])
-        elif (brightness := kwargs.get("brightness")) is not None:
-            await self._controller.set_hsv(brightness=(brightness / 255) * 100)
+            self._attr_color_mode = ColorMode.HS
+            args = {"hue": hs[0], "saturation": hs[1]}
+            if "transition" in kwargs:
+                args["t"] = float(kwargs["transition"])
+            await self._controller.set_hsv(**args)
+        elif (ct := kwargs.get(ATTR_COLOR_TEMP_KELVIN)) is not None:
+            self._attr_color_mode = ColorMode.COLOR_TEMP
+            await self._controller.set_hsv(ct=ct)
+        elif (rgbww := kwargs.get(ATTR_RGBWW_COLOR)) is not None:
+            self._attr_color_mode = ColorMode.RGBWW
+            # Call your API's raw mode function
         else:
             await self._controller.set_hsv(brightness=100)
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
         await self._controller.set_hsv(brightness=0)
+
+    async def animation_finished(self):
+        event_data = {
+            "device_id": "my-device-id",
+            "type": "motion_detected",
+        }
+        self._hass.bus.async_fire("mydomain_event", event_data)
+
+
+# class MyReceiver(RgbwwStateUpdate):
+#    def __init__(self, light: RgbwwLight):
+#        self._light = light
+#
+#    def on_update_hsv(self, h: int | None, s: int | None, v: int | None) -> None:
+#        if h is not None:
+#            self._light._attr_hs_color = (h, s)
+#
+#        if v is not None:
+#            self._light._attr_brightness = (v / 100.0) * 255
+#
+#        self._light._attr_is_on = v > 0
+#
+#        self._light.async_write_ha_state()
+#
+#    def on_connection_update(self, connected: bool) -> None:
+#        self._light._attr_available = connected
+#
+#        self._light.async_write_ha_state()

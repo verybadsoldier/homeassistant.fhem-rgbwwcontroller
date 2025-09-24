@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
+from .const import DOMAIN
+from .rgbww_controller import RgbwwController
 
 _PLATFORMS: list[Platform] = [Platform.LIGHT]
 
@@ -23,8 +25,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # For now, we'll assume no connection is needed for testing.
     # entry.runtime_data = MyAPI(...)
 
+    """Set up My RGB Controller from a config entry."""
+    hass.data.setdefault(DOMAIN, {})
+
+    # Extrahiere Host aus dem ConfigEntry
+    host = entry.data[CONF_HOST]
+
+    # Erstelle eine Hub-Instanz für DIESES GERÄT
+    # Wir übergeben die entry.unique_id (also die IP) für eine eindeutige Identifikation
+    controller = RgbwwController(host)
+    hass.data[DOMAIN][entry.entry_id] = controller
+
+    await controller.connect()
+
     # This forwards the setup to your light.py file.
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
+
+    # Disconnect when the entry gets unloaded
+    entry.async_on_unload(controller.disconnect)
 
     return True
 

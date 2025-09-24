@@ -1,11 +1,14 @@
-from collections import defaultdict
-from collections.abc import Callable
+# ruff: noqa
 from dataclasses import dataclass
 import enum
 import httpx
-import asyncio, socket
+import asyncio
 import json
-from typing import Literal
+from typing import Literal, Protocol
+
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 class _HttpMethod(enum.Enum):
@@ -13,24 +16,41 @@ class _HttpMethod(enum.Enum):
     POST = enum.auto()
 
 
+class RgbwwStateUpdate(Protocol):
+    def on_update_hsv(h: int | None, s: int | None, v: int | None) -> None: ...
+    def on_connection_update(connected: bool) -> None: ...
+    def on_animation_finished(connected: bool) -> None: ...
+    def on_sync_status(connected: bool) -> None: ...
+
+
+class RgbwwReceiver(Protocol):
+    def on_json_message(self, json_msg: str) -> None:
+        pass
+
+    def on_connect_status_change(self, connected: bool) -> None:
+        pass
+
+
 class _TcpReceiver(asyncio.Protocol):
     def __init__(
-        self, receive_callback: Callable[[str], None], on_con_lost: asyncio.Future
+        self,
+        host: str,
+        sink: RgbwwReceiver,
+        on_con_lost: asyncio.Future,
     ) -> None:
-        self._receive_callback = receive_callback
+        self._sink = sink
         self.on_con_lost = on_con_lost
-        self._buffer: str = ""
+        self._host = host
+
+        self._buffer = ""
+        self._transport: asyncio.Transport | None = None
 
     def connection_made(self, transport):
-        pass
-        # transport.write(self.message.encode())
-        # print("Data sent: {!r}".format(self.message))
+        _logger.error("%s - Connection established", self._host)
+        self._sink.on_connect_status_change(True)
 
-    def _find_complete_json(self) -> tuple[str | None, str]:
-        """
-        Scans the buffer for a complete, brace-balanced JSON object.
-        Returns the complete JSON string and the remaining buffer.
-        """
+    def get_next_json_msg(self) -> str | None:
+        """Scans the buffer for a complete, brace-balanced JSON object. Returns the completeJSON string."""
         brace_count = 0
         start_index = -1
 
@@ -45,24 +65,22 @@ class _TcpReceiver(asyncio.Protocol):
                 if brace_count == 0 and start_index != -1:
                     # Found a complete, top-level object
                     json_str = self._buffer[start_index : i + 1]
-                    remaining_buffer = self._buffer[i + 1 :]
-                    return json_str, remaining_buffer
+                    self._buffer = self._buffer[i + 1 :]
+                    return json_str
 
-        return None, self._buffer  # No complete object found
+        return None  # No complete object found
 
     def data_received(self, data):
         self._buffer += data.decode("utf-8")
 
-        while True:
-            json_str, self._buffer = self._find_complete_json()
-            if json_str is not None:
-                self._receive_callback(json_str)
-            else:
-                break
+        while (json_msg := self.get_next_json_msg()) is not None:
+            self._sink.on_json_message(json_msg)
 
     def connection_lost(self, exc):
-        print("The server closed the connection")
+        _logger.error("%s - Connection lost: %s", self._host, exc)
+        self._sink.on_connect_status_change(False)
         self.on_con_lost.set_result(True)
+        self._buffer = ""
 
 
 @dataclass
@@ -79,20 +97,114 @@ class _State:
     raw_cw: int
 
 
-class RgbwwController:
+class RgbwwController(RgbwwReceiver):
     """The actual binding to the controller via network."""
 
     _TCP_PORT = 9090
+    TIMEOUT = 70
 
     def __init__(self, host: str) -> None:
         self._host = host
+        self._connected = False
         self.state = _State(0, 0, 0, 0, "raw", 0, 0, 0, 0, 0)
+        self._connection_task: asyncio.Task | None = None
+
+        self._on_con_lost: asyncio.Future | None = None
+        self._callbacks: list[RgbwwStateUpdate] = []
+        self._transport: asyncio.Transport | None = None
+        self._watchdog_handle: asyncio.TimerHandle | None = None
+
+    def _reset_watchdog(self):
+        """Resets or starts the connection watchdog."""
+        # Cancel the old timer if it exists
+        if self._watchdog_handle:
+            self._watchdog_handle.cancel()
+
+        # Schedule the timeout_occurred method to be called after TIMEOUT seconds
+        loop = asyncio.get_running_loop()
+        self._watchdog_handle = loop.call_later(
+            RgbwwController.TIMEOUT, self._timeout_occurred
+        )
+
+    async def _run_connection_task(self):
+        """Connect to the device and keep connection alive in the event of a connection loss."""
+        while True:
+            try:
+                loop = asyncio.get_running_loop()
+                self._on_con_lost = loop.create_future()
+
+                self._transport, _ = await loop.create_connection(
+                    lambda: _TcpReceiver(
+                        self._host,
+                        self,
+                        self._on_con_lost,
+                    ),
+                    self._host,
+                    RgbwwController._TCP_PORT,
+                )
+                # Most of the time, the task will be waiting here
+                await self._on_con_lost
+            except Exception as e:
+                _logger.error("%s - Connection error: %s", self._host, e)
+            await asyncio.sleep(60)
+
+    def register_callback(self, rcv: RgbwwStateUpdate) -> None:
+        """Register a callback object."""
+        if rcv in self._callbacks:
+            raise ValueError("Already registered")
+
+        self._callbacks.append(rcv)
+
+    def unregister_callback(self, rcv: RgbwwStateUpdate) -> None:
+        """Un-Register a callback object."""
+        if rcv not in self._callbacks:
+            raise ValueError("Receiver not registered")
+
+        self._callbacks.remove(rcv)
+
+    def on_connect_status_change(self, connected: bool) -> None:
+        if connected:
+            self._reset_watchdog()
+        else:
+            self._watchdog_handle.cancel()
+            self._watchdog_handle = None
+            self._transport = None
+
+        self._connected = connected
+        for x in self._callbacks:
+            x.on_connection_update(connected)
+
+    async def connect(self) -> None:
+        """Connect to the controller (including reconnects)."""
+        if self._connection_task is not None:
+            return  # Connection task already running
+
+        self._connection_task = asyncio.create_task(
+            self._run_connection_task(), name="fhem_rgbwwcontroller_connection"
+        )
+
+    async def disconnect(self):
+        if self._transport is None:
+            return
+
+        _logger.error("%s - Disconnecting", self._host)
+        self._connection_task.cancel()
+        self._transport.close()
+
+    def _timeout_occurred(self):
+        _logger.warning(
+            "%s - ❌ Watchdog timeout! No message received for %s seconds. Closing the connection.",
+            self._host,
+            RgbwwController.TIMEOUT,
+        )
 
     async def set_hsv(
         self,
         hue: int | None = None,
         saturation: int | None = None,
         brightness: int | None = None,
+        t: float | None = None,
+        ct: int | None = None,
     ) -> None:
         # data = {
         #    "hsv": {"h": 100, "s": 100, "v": 100, "ct": 2700},
@@ -111,6 +223,12 @@ class RgbwwController:
 
         if saturation is not None:
             data["hsv"]["s"] = saturation
+
+        if ct is not None:
+            data["hsv"]["ct"] = ct
+
+        if t is not None:
+            data["t"] = t
 
         await self._send_http_post("color", data)
 
@@ -141,24 +259,38 @@ class RgbwwController:
 
         await self._send_http_post("color", data)
 
-    def _on_json_received(self, json_str: str):
-        payload = json.loads(json_str)
+    @property
+    def connected(self):
+        return self._connected
+
+    def on_json_message(self, json_msg: str) -> None:
+        # ANY data from the server resets the timer.
+        self._reset_watchdog()
+
+        payload = json.loads(json_msg)
 
         match payload["method"]:
             case "color_event":
-                self.state.hue = payload["params"]["hsv"]["h"]
-                self.state.saturation = payload["params"]["hsv"]["s"]
-                self.state.color_temp = payload["params"]["hsv"]["ct"]
-                self.state.brightness = payload["params"]["hsv"]["v"]
+                if "hsv" in payload["params"]:
+                    self.state.hue = payload["params"]["hsv"]["h"]
+                    self.state.saturation = payload["params"]["hsv"]["s"]
+                    self.state.color_temp = payload["params"]["hsv"]["ct"]
+                    self.state.brightness = payload["params"]["hsv"]["v"]
 
-                self.state.raw_ww = payload["params"]["raw"]["ww"]
-                self.state.raw_cw = payload["params"]["raw"]["cw"]
-                self.state.raw_r = payload["params"]["raw"]["r"]
-                self.state.raw_g = payload["params"]["raw"]["g"]
-                self.state.raw_b = payload["params"]["raw"]["b"]
+                if "raw" in payload["params"]:
+                    self.state.raw_ww = payload["params"]["raw"]["ww"]
+                    self.state.raw_cw = payload["params"]["raw"]["cw"]
+                    self.state.raw_r = payload["params"]["raw"]["r"]
+                    self.state.raw_g = payload["params"]["raw"]["g"]
+                    self.state.raw_b = payload["params"]["raw"]["b"]
 
                 self.state.color_mode = payload["params"]["mode"]
-                print(self.state)
+                print(f"{self._host} - {self.state}")
+
+                for x in self._callbacks:
+                    x.on_update_hsv(
+                        self.state.hue, self.state.saturation, self.state.brightness
+                    )
             # my $colorMode = "raw";
             # if ( exists $obj->{params}->{hsv} ) {
             #    $colorMode = "hsv";
@@ -194,28 +326,6 @@ class RgbwwController:
             # Log3( $name, 3, "$hash->{NAME}: EspLedController_ProcessRead: Unknown message type: " . $obj->{method} );
             # }
 
-    async def connect(self):
-        """Connect to the device and keep connection alive in the event of a connection loss."""
-        while True:
-            loop = asyncio.get_running_loop()
-            on_con_lost = loop.create_future()
-
-            transport, protocol = await loop.create_connection(
-                lambda: _TcpReceiver(self._on_json_received, on_con_lost),
-                self._host,
-                RgbwwController._TCP_PORT,
-            )
-            break
-
-            # Wait until the protocol signals that the connection
-            # is lost and close the transport.
-            # try:
-            #    await on_con_lost
-            # finally:
-            #    transport.close()
-
-            # await asyncio.sleep(60)
-
     async def _send_http_post(self, endpoint: str, payload: dict[str, any]) -> None:
         headers = {
             "user-agent": "homeassistant-fhem_rgbwwcontroller",
@@ -235,7 +345,7 @@ class RgbwwController:
 
 
 async def main():
-    a = RgbwwController("192.168.2.53")
+    a = RgbwwController("192.168.2.53", None)
     await a.connect()
 
     await a.set_hsv(brightness=100)
@@ -243,4 +353,5 @@ async def main():
     await asyncio.sleep(120)
 
 
-# asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.get_event_loop().run_forever(main())

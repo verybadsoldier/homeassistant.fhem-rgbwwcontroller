@@ -108,6 +108,7 @@ class RgbwwController(RgbwwReceiver):
         self.state = _State(0, 0, 0, 0, "raw", 0, 0, 0, 0, 0)
         self._connection_task: asyncio.Task | None = None
         self._info_cached: dict | None = None
+        self._config_cached: dict | None = None
 
         self._on_con_lost: asyncio.Future | None = None
         self._on_con_established: asyncio.Future | None = None
@@ -337,14 +338,34 @@ class RgbwwController(RgbwwReceiver):
             # Log3( $name, 3, "$hash->{NAME}: EspLedController_ProcessRead: Unknown message type: " . $obj->{method} );
             # }
 
-    async def get_info(self) -> dict:
+    async def refresh(self) -> None:
+        """Refresh the state by requesting it from the controller."""
+        await self._refresh_info()
+        await self._refresh_config()
+
+    async def _refresh_info(self) -> None:
         json_data = await self._send_http_get("info")
         self._info_cached = json.loads(json_data)
+
+    async def _refresh_config(self) -> None:
+        json_data = await self._send_http_get("config")
+        self._config_cached = json.loads(json_data)
+
+    @property
+    def info(self) -> dict:
+        if self._info_cached is None:
+            raise RuntimeError("Info not loaded yet")
         return self._info_cached
 
     @property
-    def info(self) -> dict | None:
-        return self._info_cached
+    def config(self) -> dict:
+        if self._config_cached is None:
+            raise RuntimeError("Config not loaded yet")
+        return self._config_cached
+
+    @property
+    def device_name(self) -> str:
+        return self._config_cached["general"]["device_name"]
 
     async def _send_http_post(self, endpoint: str, payload: dict[str, any]) -> None:
         headers = {

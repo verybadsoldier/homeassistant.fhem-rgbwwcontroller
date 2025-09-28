@@ -68,23 +68,26 @@ def scan_dummy(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwControl
 
     return [_check_ip_dummy(str(ip)) for ip in network.hosts()]
 
+
 async def _check_ip_dummy(ip: str) -> RgbwwController | None:
     import random
+
     await asyncio.sleep(random.randint(2, 20))
     if random.choice([True, False]):
         return None
     else:
         return RgbwwController(ip)
 
+
 async def _check_ip(ip: str) -> RgbwwController | None:
     controller = RgbwwController(ip)
 
     try:
-        info = await controller.get_info()
-        mac = info["connection"]["mac"]
+        await controller.refresh()
+        mac = controller.info["connection"]["mac"]
         _logger.debug("Found device at %s with MAC %s", ip, mac)
     except (httpx.HTTPError, TimeoutError):
-        pass
+        return None
     else:
         return controller
 

@@ -44,8 +44,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = controller
 
     await controller.connect()
+    await controller.refresh()
 
-    info = await controller.get_info()
     # --- DEVICE REGISTRATION ---
     # This is the new part. We create a device in the registry.
     dev_reg = device_registry.async_get(hass)
@@ -55,7 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         name=entry.title,  # The name the user gave in the config flow
         manufacturer="Homebrew Hardware",
         model="FHEM RGBWW LED Controller",  # Replace with actual model
-        sw_version=f"{info['git_version']} (WebApp:{info['webapp_version']})",
+        sw_version=f"{controller.info['git_version']} (WebApp:{controller.info['webapp_version']})",
     )
     # --- END DEVICE REGISTRATION ---
 

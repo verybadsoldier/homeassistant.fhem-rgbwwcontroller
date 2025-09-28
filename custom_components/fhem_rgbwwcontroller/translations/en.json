@@ -1,13 +1,14 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Device is already configured"
+      "already_configured": "The device at {host} ({name}) is already configured",
+      "cannot_connect": "Failed to connect to the controller",
+      "scan_no_controllers": "No controllers have been found in the network {network}. Please check that controllers are powered on and connected to the network."
     },
     "error": {
       "cannot_connect": "Failed to connect",
       "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error",
-      "scan_no_controllers": "No controllers have been found in network {{network}}"
+      "unknown": "Unexpected error"
     },
     "progress": {
       "scanning": "Scanning for FHEM RGBWW Controllers..."
@@ -18,11 +19,37 @@
         "description": "Use the configuration of the integration to add RGBWW device.",
         "menu_options": {
           "scan_form": "Automatic discovery of controllers",
-          "manual": "Manual"
+          "add_manually": "Add hostname or IP address manually",
+          "process_scan_results": "Add device from previous scan"
         },
         "menu_option_descriptions": {
           "scan": "Scan IP range for controllers",
-          "manual": "Add one controller by specifying its IP address or hostname"
+          "add_manually": "Add one controller by specifying its IP address or hostname"
+        }
+      },
+      "add_manually": {
+        "title": "Add FHEM RGBWW Controller",
+        "description": "Add a FHEM RGBWW Controller by specifying its hostname or IP address.",
+        "data": {
+          "name": "Device name",
+          "host": "Hostname or IP address"
+        },
+        "submit": "Add Device"
+      },
+      "scan_start": {
+        "title": "Scan for Controllers",
+        "description": "Specify the network range to scan for FHEM RGBWW Controllers.",
+        "data": {
+          "scan_network": "Network (CIDR notation)"
+        },
+        "submit": "Start scan"
+      },
+      "add_controller_from_scan": {
+        "title": "Scan Result",
+        "description": "Select one of the discovered controllers to add it to Home Assistant.\n\n{num_controllers} controller(s) have been found in the last scan at {scan_time}.",
+        "submit": "Add Device",
+        "data": {
+          "name": "Device name"
         }
       }
     }

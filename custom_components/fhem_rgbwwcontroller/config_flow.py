@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+import datetime
 import ipaddress
 import logging
-from typing import Any
+from typing import Any, cast
 
 from httpx import HTTPError
 import voluptuous as vol
@@ -13,31 +15,28 @@ import voluptuous as vol
 from config.custom_components.fhem_rgbwwcontroller.rgbww_controller import (
     RgbwwController,
 )
-from homeassistant.config_entries import (
-    ConfigEntry,
-    ConfigFlow,
-    ConfigFlowResult,
-    ConfigSubentryFlow,
-    OptionsFlow,
-    SubentryFlowResult,
-)
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, CONF_NAME
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.helpers.selector import TextSelector, selector
 
 from . import controller_autodetect
-from .const import DOMAIN
+from .const import DISCOVERY_RESULTS, DOMAIN
 
-_LOGGER = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
-# TODO adjust the data schema to the data that you need
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_NAME): str,
-        vol.Required(CONF_HOST): str,
-    }
-)
+
+class _InvalidHostError(RuntimeError):
+    """Error to indicate that the controller host is invalid."""
+
+    def __init__(self, host: str) -> None:
+        super().__init__(f"Cannot retrieve MAC address from host {host}")
+        self.host = host
+
+
+@dataclass
+class DiscoveryResult:
+    controllers: dict[str, RgbwwController]
+    timestamp: datetime
 
 
 class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -54,9 +53,21 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        self.hass.data.setdefault(DOMAIN, {})
+        self.hass.data[DOMAIN].setdefault(DISCOVERY_RESULTS, None)
+
+        options = []
+
+        if self.hass.data[DOMAIN][DISCOVERY_RESULTS] is not None:
+            options.append(
+                "process_scan_results"
+            )  # directly jump to results of last scan
+
+        options += ["scan_form", "add_manually"]
+
         return self.async_show_menu(
             step_id="user",
-            menu_options=["scan_form", "manual"],
+            menu_options=options,
         )
 
     async def async_step_scan_form(
@@ -66,7 +77,9 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="scan_start",
             data_schema=vol.Schema(
                 {
-                    vol.Required("ip_range", default="192.168.2.0/24"): TextSelector(),
+                    vol.Required(
+                        "scan_network", default="192.168.2.0/24"
+                    ): TextSelector(),
                 }
             ),
             errors={},
@@ -78,7 +91,9 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
             num_done_tasks = len([x for x in self._scan_tasks if x.done()])
 
             if num_done_tasks < len(self._scan_tasks):
-               self.async_update_progress(num_done_tasks / float(len(self._scan_tasks)))
+                self.async_update_progress(
+                    num_done_tasks / float(len(self._scan_tasks))
+                )
             else:
                 break
 
@@ -92,58 +107,159 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if self._scan_tasks is None:
-            self._scan_network = ipaddress.IPv4Network(user_input["ip_range"])
-            self._scan_tasks = [asyncio.create_task(x) for x in controller_autodetect.scan_dummy(self._scan_network)]
+            self._scan_network = ipaddress.IPv4Network(user_input["scan_network"])
+            self._scan_tasks = [
+                asyncio.create_task(x)
+                for x in controller_autodetect.scan(self._scan_network)
+            ]
 
-            self._scan_monitor_task = self.hass.async_create_task(self._monitor_progress())
+            self._scan_monitor_task = self.hass.async_create_task(
+                self._monitor_progress()
+            )
 
             return self.async_show_progress(
                 progress_action="scanning",
                 progress_task=self._scan_monitor_task,
             )
         else:
-            return self.async_show_progress_done(next_step_id="scan_finished")
+            return self.async_show_progress_done(next_step_id="process_scan_results")
 
-    async def async_step_scan_finished(
+    async def async_step_process_scan_results(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        found_controllers = [t.result() for t in self._scan_tasks if t.result() is not None]
+        if self._scan_tasks is not None:
+            scan_time = datetime.datetime.now(datetime.UTC)
+            found_controllers = {
+                t.result().host: t.result()
+                for t in self._scan_tasks
+                if t.result() is not None
+            }
 
-        if not found_controllers:
-            return self.async_abort("scan_no_controllers", description_placeholders={"network": str(self._scan_network)})
+            if not found_controllers:
+                self.hass.data[DOMAIN][DISCOVERY_RESULTS] = None
+                return self.async_abort(
+                    reason="scan_no_controllers",
+                    description_placeholders={"network": str(self._scan_network)},
+                )
 
-        controller_names = [f"{x.info['name']} ({x.host})" for x in found_controllers]
+            self.hass.data[DOMAIN][DISCOVERY_RESULTS] = DiscoveryResult(
+                found_controllers, scan_time
+            )
 
-        data_schema = vol.Schema({vol.Required(CONF_NAME): str,
-                                  vol.Required(CONF_HOST): selector({
-                                    "select": {
-                                        "options": controller_names,
-                                    }
-                                })})
+        controller_options = [
+            {
+                "label": f"{x.device_name} ({x.host})",
+                "value": x.host,
+            }
+            for x in self.hass.data[DOMAIN][DISCOVERY_RESULTS].controllers.values()
+        ]
 
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_NAME): str,
+                vol.Required(CONF_HOST): selector(
+                    {
+                        "select": {
+                            "options": controller_options,
+                        }
+                    }
+                ),
+            }
+        )
+
+        discovery_result = cast(
+            DiscoveryResult, self.hass.data[DOMAIN][DISCOVERY_RESULTS]
+        )
         return self.async_show_form(
-            step_id="finalize",
+            step_id="add_controller_from_scan",
             data_schema=data_schema,
+            description_placeholders={
+                "num_controllers": str(len(discovery_result.controllers)),
+                "scan_time": discovery_result.timestamp.strftime("%H:%M:%S"),
+            },
             errors={},
         )
 
-    async def async_step_manual(
+    async def async_step_add_manually(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        data_schema = vol.Schema({vol.Required(CONF_NAME): str,
-                                  vol.Required(CONF_HOST): str})
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                host = user_input[CONF_HOST]
+                return await self._create_entry_from_host(
+                    host=host, title=user_input[CONF_NAME]
+                )
+            except _InvalidHostError:
+                return self.async_show_form(
+                    step_id="add_manually",
+                    data_schema=vol.Schema(
+                        {vol.Required(CONF_NAME): str, vol.Required(CONF_HOST): str}
+                    ),
+                    errors={CONF_HOST: "cannot_connect"},
+                )
 
         return self.async_show_form(
-            step_id="finalize",
-            data_schema=data_schema,
-            errors={},
+            step_id="add_manually",
+            data_schema=vol.Schema(
+                {vol.Required(CONF_NAME): str, vol.Required(CONF_HOST): str}
+            ),
+            errors=errors,
         )
 
-    async def async_step_finalize(
+    async def _create_entry_from_controller(
+        self, controller: RgbwwController, title: str
+    ):
+        return await self._create_entry(
+            unique_id=controller.info["connection"]["mac"],
+            title=title,
+            data={CONF_HOST: controller.host, CONF_NAME: title},
+            do_check=False,  # already checked during scan
+        )
+
+    async def _create_entry_from_host(self, host: str, title: str):
+        controller = RgbwwController(host)
+        try:
+            # just check if reachable
+            await controller.refresh()
+        except HTTPError:
+            raise _InvalidHostError(host)
+
+        return await self._create_entry(
+            unique_id=controller.info["connection"]["mac"],
+            title=title,
+            host=host,
+        )
+
+    async def _create_entry(
+        self, unique_id: str, title: str, host: str
+    ) -> ConfigFlowResult:
+        await self.async_set_unique_id(unique_id)
+        self._abort_if_unique_id_configured()
+
+        return self.async_create_entry(
+            title=title, data={CONF_HOST: host, CONF_NAME: title}
+        )
+
+    async def async_step_add_controller_from_scan(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+        if (
+            ctrl := self.hass.data[DOMAIN][DISCOVERY_RESULTS].controllers[
+                user_input[CONF_HOST]
+            ]
+        ) is None:
+            ctrl = RgbwwController(user_input[CONF_HOST])
+            try:
+                await ctrl.refresh()
+            except HTTPError:
+                self.async_abort(reason="cannot_connect")
 
+        return self._create_entry(
+            unique_id=ctrl.info["connection"]["mac"],
+            title=user_input[CONF_NAME],
+            host=ctrl.host,
+        )
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -156,7 +272,7 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
             controller = RgbwwController(host)
             try:
                 # just check if reachable
-                _ = await controller.get_info()
+                await controller.refresh()
             except HTTPError:
                 errors[CONF_HOST] = f"Cannot retrieve MAC address from host {host}"
                 cur_data = user_input

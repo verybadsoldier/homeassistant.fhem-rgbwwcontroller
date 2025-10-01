@@ -30,3 +30,17 @@ set_hsv_advanced:
         - h: 50
           s: '+1500'
         - v: 99
+
+pause:
+  name: Pause
+  description: >
+    Pauses the current HSV animation on all or some channels.
+  fields:
+    all_channels:
+      name: All Channels
+      description: "Cancel all channels"
+      required: true
+    channel_h:
+      name: Hue
+      description: "Cancel hue channel animation"
+      required: false

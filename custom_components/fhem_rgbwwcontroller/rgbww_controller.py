@@ -25,6 +25,7 @@ class RgbwwStateUpdate(Protocol):
     def on_connection_update(connected: bool) -> None: ...
     def on_transition_finished(name: str, requeued: bool) -> None: ...
     def on_sync_status(connected: bool) -> None: ...
+    def on_config_update(config: dict) -> None: ...
 
 
 class RgbwwReceiver(Protocol):
@@ -83,7 +84,7 @@ class _TcpReceiver(asyncio.Protocol):
 
 
 @dataclass
-class _State:
+class _ColorState:
     color_temp: int
     hue: int
     saturation: int
@@ -105,7 +106,7 @@ class RgbwwController(RgbwwReceiver):
     def __init__(self, host: str) -> None:
         self.host = host
         self._connected = False
-        self.state = _State(0, 0, 0, 0, "raw", 0, 0, 0, 0, 0)
+        self.color = _ColorState(0, 0, 0, 0, "raw", 0, 0, 0, 0, 0)
         self._connection_task: asyncio.Task | None = None
         self._info_cached: dict | None = None
         self._config_cached: dict | None = None
@@ -274,31 +275,49 @@ class RgbwwController(RgbwwReceiver):
     def connected(self):
         return self._connected
 
+    def _update_colorstate_from_json(self, json_msg: dict) -> None:
+        if "hsv" in json_msg:
+            self.color.hue = json_msg["hsv"].get("h", self.color.hue)
+            self.color.saturation = json_msg["hsv"].get("s", self.color.saturation)
+            self.color.color_temp = json_msg["hsv"].get("ct", self.color.color_temp)
+            self.color.brightness = json_msg["hsv"].get("v", self.color.brightness)
+
+        if "raw" in json_msg:
+            self.color.raw_ww = json_msg["raw"].get("ww", self.color.raw_ww)
+            self.color.raw_cw = json_msg["raw"].get("cw", self.color.raw_cw)
+            self.color.raw_r = json_msg["raw"].get("r", self.color.raw_r)
+            self.color.raw_g = json_msg["raw"].get("g", self.color.raw_g)
+            self.color.raw_b = json_msg["raw"].get("b", self.color.raw_b)
+
+        if "mode" in json_msg:
+            self.color.color_mode = json_msg["mode"]
+
     def on_json_message(self, json_msg: dict) -> None:
         # ANY data from the server resets the timer.
         self._reset_watchdog()
 
         match json_msg["method"]:
             case "color_event":
-                if "hsv" in json_msg["params"]:
-                    self.state.hue = json_msg["params"]["hsv"]["h"]
-                    self.state.saturation = json_msg["params"]["hsv"]["s"]
-                    self.state.color_temp = json_msg["params"]["hsv"]["ct"]
-                    self.state.brightness = json_msg["params"]["hsv"]["v"]
+                self._update_colorstate_from_json(json_msg["params"])
+                # if "hsv" in json_msg["params"]:
+                #    self.color.hue = json_msg["params"]["hsv"]["h"]
+                #    self.color.saturation = json_msg["params"]["hsv"]["s"]
+                #    self.state.color_temp = json_msg["params"]["hsv"]["ct"]
+                #    self.color.brightness = json_msg["params"]["hsv"]["v"]
 
-                if "raw" in json_msg["params"]:
-                    self.state.raw_ww = json_msg["params"]["raw"]["ww"]
-                    self.state.raw_cw = json_msg["params"]["raw"]["cw"]
-                    self.state.raw_r = json_msg["params"]["raw"]["r"]
-                    self.state.raw_g = json_msg["params"]["raw"]["g"]
-                    self.state.raw_b = json_msg["params"]["raw"]["b"]
+                # if "raw" in json_msg["params"]:
+                #    self.color.raw_ww = json_msg["params"]["raw"]["ww"]
+                #    self.color.raw_cw = json_msg["params"]["raw"]["cw"]
+                #    self.color.raw_r = json_msg["params"]["raw"]["r"]
+                #    self.color.raw_g = json_msg["params"]["raw"]["g"]
+                #    self.color.raw_b = json_msg["params"]["raw"]["b"]
 
-                self.state.color_mode = json_msg["params"]["mode"]
-                print(f"{self.host} - {self.state}")
+                # self.state.color_mode = json_msg["params"]["mode"]
+                print(f"{self.host} - {self.color}")
 
                 for x in self._callbacks:
                     x.on_update_hsv(
-                        self.state.hue, self.state.saturation, self.state.brightness
+                        self.color.hue, self.color.saturation, self.color.brightness
                     )
             # my $colorMode = "raw";
             # if ( exists $obj->{params}->{hsv} ) {
@@ -318,6 +337,10 @@ class RgbwwController(RgbwwReceiver):
             # my $msg = $obj->{params}{name} . "," . ($obj->{params}{requeued} ? "requeued" : "finished");
             # readingsSingleUpdate( $hash, "tranisitionFinished", $msg, 1 );
             # }
+            case "config_event":
+                self._config_cached = json_msg["params"]
+                for x in self._callbacks:
+                    x.on_config_update(self._config_cached)
             case "keep_alive":
                 ...
             # elsif ( $obj->{method} eq "keep_alive" ) {
@@ -342,6 +365,7 @@ class RgbwwController(RgbwwReceiver):
         """Refresh the state by requesting it from the controller."""
         await self._refresh_info()
         await self._refresh_config()
+        await self._refresh_color()
 
     async def _refresh_info(self) -> None:
         json_data = await self._send_http_get("info")
@@ -350,6 +374,10 @@ class RgbwwController(RgbwwReceiver):
     async def _refresh_config(self) -> None:
         json_data = await self._send_http_get("config")
         self._config_cached = json.loads(json_data)
+
+    async def _refresh_color(self) -> None:
+        json_data = await self._send_http_get("color")
+        self._update_colorstate_from_json(json.loads(json_data))
 
     @property
     def info(self) -> dict:
@@ -401,99 +429,99 @@ class RgbwwController(RgbwwReceiver):
             return r.text
 
 
-class AutoDetector:
-    @staticmethod
-    def get_scan_range() -> ipaddress.IPv4Network | None:
-        """
-        Finds the active network interface and returns its IP range.
-        """
-        try:
-            # Find the default gateway to determine the active interface
-            gateways = netifaces.gateways()
-            default_gateway = gateways.get("default", {}).get(netifaces.AF_INET)
-
-            if not default_gateway:
-                _logger.error(
-                    "❌ Could not find the default gateway. Please check your network connection."
-                )
-                return None
-
-            interface = default_gateway[1]
-            _logger.info(f"🌐 Found active interface: {interface}")
-
-            # Get the addresses for the found interface
-            addresses = netifaces.ifaddresses(interface)
-            ipv4_info = addresses.get(netifaces.AF_INET)
-
-            if not ipv4_info:
-                _logger.info(
-                    "❌ No IPv4 address found for interface %s.", str(interface)
-                )
-                return None
-
-            # Extract IP and netmask
-            ip_address = ipv4_info[0]["addr"]
-            netmask = ipv4_info[0]["netmask"]
-
-            # Create a network object from the IP and netmask
-            # The 'strict=False' part handles cases where the IP might be a network/broadcast address
-            network = ipaddress.IPv4Network(f"{ip_address}/{netmask}", strict=False)
-            return network
-
-        except Exception as e:
-            _logger.exception(
-                "An error occurred when detecting the IP range.", exc_info=e
-            )
-            return None
-
-    @staticmethod
-    async def scan(network: ipaddress.IPv4Network) -> list[RgbwwController]:
-        tasks = []
-
-        for ip in network.hosts():
-            tasks.append(AutoDetector._check_ip(str(ip)))
-
-        results = await asyncio.gather(*tasks)
-
-        found_devices = [res for res in results if res is not None]
-
-        return found_devices
-
-    @staticmethod
-    async def _check_ip(ip: str) -> RgbwwController | None:
-        controller = RgbwwController(ip)
-
-        try:
-            info = await controller.get_info()
-            mac = info["connection"]["mac"]
-            print(f"Found device at {ip} with MAC {mac}")
-            return controller
-        except (httpx.HTTPError, asyncio.TimeoutError):
-            pass
-
-
-async def main_autodetect():
-    now = time.monotonic()
-    # mask = AutoDetector.get_scan_range()
-
-    network = ipaddress.IPv4Network("192.168.2.0/24")
-    devices = await AutoDetector.scan(network)
-    now2 = time.monotonic()
-    print(f"Found {len(devices)} devices:")
-
-    for device in devices:
-        print(f"- {device.host}")
-
-
-async def main():
-    a = RgbwwController("192.168.2.53")
-    info = await a.get_info()
-    await a.connect()
-
-    await a.set_hsv(brightness=100)
-
-    await asyncio.sleep(120)
-
-
-if __name__ == "__main__":
-    asyncio.run(main_autodetect())
+# class AutoDetector:
+#    @staticmethod
+#    def get_scan_range() -> ipaddress.IPv4Network | None:
+#        """
+#        Finds the active network interface and returns its IP range.
+#        """
+#        try:
+#            # Find the default gateway to determine the active interface
+#            gateways = netifaces.gateways()
+#            default_gateway = gateways.get("default", {}).get(netifaces.AF_INET)
+#
+#            if not default_gateway:
+#                _logger.error(
+#                    "❌ Could not find the default gateway. Please check your network connection."
+#                )
+#                return None
+#
+#            interface = default_gateway[1]
+#            _logger.info(f"🌐 Found active interface: {interface}")
+#
+#            # Get the addresses for the found interface
+#            addresses = netifaces.ifaddresses(interface)
+#            ipv4_info = addresses.get(netifaces.AF_INET)
+#
+#            if not ipv4_info:
+#                _logger.info(
+#                    "❌ No IPv4 address found for interface %s.", str(interface)
+#                )
+#                return None
+#
+#            # Extract IP and netmask
+#            ip_address = ipv4_info[0]["addr"]
+#            netmask = ipv4_info[0]["netmask"]
+#
+#            # Create a network object from the IP and netmask
+#            # The 'strict=False' part handles cases where the IP might be a network/broadcast address
+#            network = ipaddress.IPv4Network(f"{ip_address}/{netmask}", strict=False)
+#            return network
+#
+#        except Exception as e:
+#            _logger.exception(
+#                "An error occurred when detecting the IP range.", exc_info=e
+#            )
+#            return None
+#
+#    @staticmethod
+#    async def scan(network: ipaddress.IPv4Network) -> list[RgbwwController]:
+#        tasks = []
+#
+#        for ip in network.hosts():
+#            tasks.append(AutoDetector._check_ip(str(ip)))
+#
+#        results = await asyncio.gather(*tasks)
+#
+#        found_devices = [res for res in results if res is not None]
+#
+#        return found_devices
+#
+#    @staticmethod
+#    async def _check_ip(ip: str) -> RgbwwController | None:
+#        controller = RgbwwController(ip)
+#
+#        try:
+#            info = await controller.get_info()
+#            mac = info["connection"]["mac"]
+#            print(f"Found device at {ip} with MAC {mac}")
+#            return controller
+#        except (httpx.HTTPError, asyncio.TimeoutError):
+#            pass
+#
+#
+# async def main_autodetect():
+#    now = time.monotonic()
+#    # mask = AutoDetector.get_scan_range()
+#
+#    network = ipaddress.IPv4Network("192.168.2.0/24")
+#    devices = await AutoDetector.scan(network)
+#    now2 = time.monotonic()
+#    print(f"Found {len(devices)} devices:")
+#
+#    for device in devices:
+#        print(f"- {device.host}")
+#
+#
+# async def main():
+#    a = RgbwwController("192.168.2.53")
+#    info = await a.get_info()
+#    await a.connect()
+#
+#    await a.set_hsv(brightness=100)
+#
+#    await asyncio.sleep(120)
+#
+#
+# if __name__ == "__main__":
+#    asyncio.run(main_autodetect())

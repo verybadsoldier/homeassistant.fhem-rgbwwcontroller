@@ -1,38 +1,55 @@
 from typing import Any, cast
 
-from homeassistant.helpers import entity_platform
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.typing import ConfigType
-from .rgbww_controller import RgbwwController
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+import voluptuous as vol
 
-from .const import DOMAIN
 from homeassistant.components.light import (
+    ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP_KELVIN,
-    ATTR_RGBWW_COLOR,
     ATTR_HS_COLOR,
+    ATTR_RGBWW_COLOR,
     DEFAULT_MAX_KELVIN,
     DEFAULT_MIN_KELVIN,
     ColorMode,
     LightEntity,
     LightEntityFeature,
 )
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers import entity_platform
+from homeassistant.util.color import (
+    color_hs_to_xy,
+    color_temperature_kelvin_to_mired,
+    color_temperature_mired_to_kelvin,
+)
 
 
 # Import the device class from the component that you want to support
 import homeassistant.helpers.config_validation as cv
-from homeassistant.components.light import LightEntity
-from homeassistant.const import CONF_HOST
-from homeassistant.core import HomeAssistant
-import voluptuous as vol
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+from .const import DOMAIN
+from .rgbww_controller import RgbwwController
 
 SERVICE_SET_HSV_ADV = "set_hsv_advanced"
+SERVICE_PAUSE = "PAUSE"
+SERVICE_CONTINUE = "CONTINUE"
+SERVICE_SKIP = "SKIP"
+SERVICE_STOP = "STOP"
 
 
-def set_hsv_advanced(self, call: ServiceCall) -> None:
+def _service_set_hsv_advanced(self, call: ServiceCall) -> None:
     print("hhlo")
+    if call.data["hsv_command_string"] == "fade":
+        print("as")
+
+
+def _service_pause(self, call: ServiceCall) -> None:
+    if call.data["hsv_command_string"] == "fade":
+        print("as")
+
+
+def _service_continue(self, call: ServiceCall) -> None:
     if call.data["hsv_command_string"] == "fade":
         print("as")
 
@@ -54,11 +71,25 @@ async def async_setup_entry(
 
     async_add_entities((rgb,))
 
+    # Register the service to set HSV with advanced options
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         SERVICE_SET_HSV_ADV,
         {vol.Required("hsv_command_string"): cv.string},
-        set_hsv_advanced,
+        _service_set_hsv_advanced,
+    )
+
+    platform.async_register_entity_service(
+        SERVICE_PAUSE,
+        vol.Schema(
+            {
+                vol.Required("all_channels"): bool,
+                vol.Optional("channel_h"): bool,
+                vol.Optional("channel_s"): bool,
+                vol.Optional("channel_v"): bool,
+            }
+        ),
+        _service_pause,
     )
 
 
@@ -80,28 +111,37 @@ class RgbwwLight(LightEntity):
     ) -> None:
         """Initialize the light."""
         super().__init__()
+
+        self._controller = controller
+
         self._hass = hass
         self._attr_unique_id = unique_id + "_light"
         self._attr_name = name + " Light"
 
         self._attr_supported_color_modes = (
             ColorMode.HS,
-            ColorMode.RGBWW,
+            # ColorMode.RGBWW,
             ColorMode.COLOR_TEMP,
         )
-        self._attr_supported_features = LightEntityFeature.TRANSITION
+        self._attr_supported_features = (
+            LightEntityFeature.TRANSITION
+            | LightEntityFeature.FLASH
+            | LightEntityFeature.EFFECT
+        )
         self._attr_color_mode = {ColorMode.HS}
 
         self._attr_available = controller.connected
-
-        self._controller = controller
+        self._attr_color_temp_kelvin = self._controller.color.color_temp
+        self._attr_max_color_temp_kelvin = self._controller.config["color"][
+            "colortemp"
+        ]["cw"]
+        self._attr_min_color_temp_kelvin = self._controller.config["color"][
+            "colortemp"
+        ]["ww"]
 
         # --- ENTITY AND DEVICE LINKING ---
-        # This is where the magic happens.
-        self._attr_unique_id = f"{unique_id}_lightunique"
-        self._attr_name = f"{name}"  # "light" prefix will be added automatically
 
-        # This `device_info` block links the entity to the device you created
+        # This `device_info` block links the entity to the device
         # in __init__.py. The `identifiers` MUST match exactly.
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, unique_id)},
@@ -129,7 +169,7 @@ class RgbwwLight(LightEntity):
         self.async_write_ha_state()
 
     # protocol rgbww state
-    def on_connection_update(self, connected: bool) -> None:
+    def on_avilability_update(self, connected: bool) -> None:
         self._attr_available = connected
 
         self.async_write_ha_state()
@@ -145,12 +185,13 @@ class RgbwwLight(LightEntity):
                 args["t"] = float(kwargs["transition"])
             await self._controller.set_hsv(**args)
         elif (ct := kwargs.get(ATTR_COLOR_TEMP_KELVIN)) is not None:
-            self._attr_color_mode = ColorMode.COLOR_TEMP
             await self._controller.set_hsv(ct=ct)
         elif (rgbww := kwargs.get(ATTR_RGBWW_COLOR)) is not None:
             self._attr_color_mode = ColorMode.RGBWW
             # Call your API's raw mode function
-        else:
+        elif (brightness := kwargs.get(ATTR_BRIGHTNESS)) is not None:
+            await self._controller.set_hsv(brightness=(brightness / 255.0) * 100)
+        else:  # Turn on with last known state or default
             await self._controller.set_hsv(brightness=100)
         self.async_write_ha_state()
 
@@ -167,23 +208,7 @@ class RgbwwLight(LightEntity):
         }
         self._hass.bus.async_fire("transition_finished", event_data)
 
-
-# class MyReceiver(RgbwwStateUpdate):
-#    def __init__(self, light: RgbwwLight):
-#        self._light = light
-#
-#    def on_update_hsv(self, h: int | None, s: int | None, v: int | None) -> None:
-#        if h is not None:
-#            self._light._attr_hs_color = (h, s)
-#
-#        if v is not None:
-#            self._light._attr_brightness = (v / 100.0) * 255
-#
-#        self._light._attr_is_on = v > 0
-#
-#        self._light.async_write_ha_state()
-#
-#    def on_connection_update(self, connected: bool) -> None:
-#        self._light._attr_available = connected
-#
-#        self._light.async_write_ha_state()
+    def on_config_update(self, config: dict) -> None:
+        self._attr_max_color_temp_kelvin = config["color"]["colortemp"]["cw"]
+        self._attr_min_color_temp_kelvin = config["color"]["colortemp"]["ww"]
+        self.async_write_ha_state()

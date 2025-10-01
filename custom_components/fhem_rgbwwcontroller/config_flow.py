@@ -8,6 +8,7 @@ import datetime
 import ipaddress
 import logging
 from typing import Any, cast
+from homeassistant.util import dt as dt_util
 
 from httpx import HTTPError
 import voluptuous as vol
@@ -175,7 +176,9 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             description_placeholders={
                 "num_controllers": str(len(discovery_result.controllers)),
-                "scan_time": discovery_result.timestamp.strftime("%H:%M:%S"),
+                "scan_time": dt_util.as_local(discovery_result.timestamp).strftime(
+                    "%H:%M:%S"
+                ),
             },
             errors={},
         )
@@ -255,7 +258,7 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
             except HTTPError:
                 self.async_abort(reason="cannot_connect")
 
-        return self._create_entry(
+        return await self._create_entry(
             unique_id=ctrl.info["connection"]["mac"],
             title=user_input[CONF_NAME],
             host=ctrl.host,

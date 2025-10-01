@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from httpx import HTTPStatusError
 
 from homeassistant.config_entries import ConfigEntry
@@ -16,7 +17,10 @@ from homeassistant.helpers import (
     config_validation as cv,
     service,
 )
+import logging
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+_logger = logging.getLogger(__name__)
 
 _PLATFORMS: list[Platform] = [Platform.LIGHT]
 
@@ -44,6 +48,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = controller
 
     await controller.connect()
+
     await controller.refresh()
 
     # --- DEVICE REGISTRATION ---

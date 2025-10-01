@@ -1,13 +1,10 @@
 import voluptuous as vol
 
-from homeassistant.const import (
-    CONF_DEVICE_ID,
-    CONF_DOMAIN,
-    CONF_ENTITY_ID,
-    CONF_TYPE,
-)
+from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_ENTITY_ID, CONF_TYPE
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers import config_validation as cv, entity_registry as er
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
+
 from .const import DOMAIN  # Import your integration's domain
 
 # Define constants for our action
@@ -15,13 +12,13 @@ ACTION_TYPE_TURN_ON_LOG = "turn_on_with_log"
 CONF_MESSAGE = "message"
 
 # Define the schema for the action in an automation
-ACTION_SCHEMA = cv.DEVICE_ACTION_BASE.extend(
-    {
-        vol.Required(CONF_TYPE): ACTION_TYPE_TURN_ON_LOG,
-        vol.Required(CONF_ENTITY_ID): cv.entity_id,
-        vol.Optional(CONF_MESSAGE): cv.string,
-    }
-)
+# ACTION_SCHEMA = cv.DEVICE_ACTION_BASE.extend(
+#    {
+#        vol.Required(CONF_TYPE): ACTION_TYPE_TURN_ON_LOG,
+#        vol.Required(CONF_ENTITY_ID): cv.entity_id,
+#        vol.Optional(CONF_MESSAGE): cv.string,
+#    }
+# )
 
 
 async def async_get_actions(

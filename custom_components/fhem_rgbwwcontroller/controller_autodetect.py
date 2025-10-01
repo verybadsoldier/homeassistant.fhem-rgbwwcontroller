@@ -1,9 +1,12 @@
+import random
 import asyncio
-import time
-import httpx
 import ipaddress
 import logging
+import time
+
+import httpx
 import netifaces
+
 from .rgbww_controller import RgbwwController
 
 _logger = logging.getLogger(__name__)
@@ -41,8 +44,7 @@ def get_scan_range() -> ipaddress.IPv4Network | None:
 
         # Create a network object from the IP and netmask
         # The 'strict=False' part handles cases where the IP might be a network/broadcast address
-        network = ipaddress.IPv4Network(f"{ip_address}/{netmask}", strict=False)
-        return network
+        return ipaddress.IPv4Network(f"{ip_address}/{netmask}", strict=False)
 
     except Exception as e:
         _logger.exception("An error occurred when detecting the IP range.", exc_info=e)
@@ -70,8 +72,6 @@ def scan_dummy(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwControl
 
 
 async def _check_ip_dummy(ip: str) -> RgbwwController | None:
-    import random
-
     await asyncio.sleep(random.randint(2, 20))
     if random.choice([True, False]):
         return None

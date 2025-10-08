@@ -27,6 +27,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import entity_platform
 
+import voluptuous as vol
+from homeassistant.const import ATTR_ENTITY_ID
+import homeassistant.helpers.config_validation as cv
+
 # Import the device class from the component that you want to support
 import homeassistant.helpers.config_validation as cv
 import homeassistant.helpers.device_registry as dr
@@ -73,13 +77,60 @@ async def async_setup_entry(
 
     async_add_entities((rgb,))
 
+    # Define constants for service field names for easier maintenance
+    ATTR_ANIM_DEFINITION = "anim_definition"
+    ATTR_HUE = "hue"
+    ATTR_SATURATION = "saturation"
+    ATTR_BRIGHTNESS = "brightness"
+    ATTR_TRANSITION_MODE = "transition_mode"
+    ATTR_TRANSITION_VALUE = "transition_value"
+    ATTR_STAY = "stay"
+    ATTR_QUEUE_POLICY = "queue_policy"
+    ATTR_REQUEUE = "requeue"
+
+    # This schema defines the structure for a single step in the animation sequence.
+    # It corresponds to one object in the 'anim_definition' list.
+    ANIMATION_STEP_SCHEMA = vol.Schema({
+        vol.Required(ATTR_HUE): cv.string,
+        vol.Required(ATTR_SATURATION): cv.string,
+        vol.Required(ATTR_BRIGHTNESS): cv.string,
+        vol.Required(ATTR_TRANSITION_MODE): vol.In(["time", "speed"]),
+        vol.Required(ATTR_TRANSITION_VALUE): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Optional(ATTR_STAY, default=0): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Optional(ATTR_QUEUE_POLICY, default="single"): vol.In(
+            ["single", "back", "front", "front_reset"]
+        ),
+        vol.Optional(ATTR_REQUEUE, default=False): cv.boolean,
+    })
+
+    # This is the main schema for the 'animation' service call.
+    ANIMATION_SERVICE_SCHEMA = vol.Schema({
+        # Validate that an entity_id is provided, which is standard for services
+        # targeting an entity.
+        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+
+        # Validate the main field 'anim_definition'.
+        vol.Required(ATTR_ANIM_DEFINITION): vol.All(
+            # 1. Ensure the input is a list.
+            cv.ensure_list,
+            # 2. Apply the ANIMATION_STEP_SCHEMA to each item in the list.
+            [ANIMATION_STEP_SCHEMA],
+            # 3. Ensure the list is not empty, as per your description.
+            vol.Length(min=1),
+        ),
+    })
+
     # Register the service to set HSV with advanced options
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         SERVICE_ANIMATION,
-        {vol.Required("anim_definition"): cv.string},
+        ANIMATION_SERVICE_SCHEMA,
         _service_animation,
     )
+
+
+
+
 
     # platform.async_register_entity_service(
     #    SERVICE_PAUSE,

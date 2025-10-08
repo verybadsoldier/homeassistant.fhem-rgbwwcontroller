@@ -24,6 +24,80 @@ animation:
       domain: light
   fields:
     anim_definition:
+      name: Animation Commands
+      description: "A list of command objects."
+      required: true
+      selector:
+        object:
+          label_field: hue
+          description_field: transition_mode
+          multiple: true
+          fields:
+            hue:
+              label: Hue
+              selector:
+                text:
+            saturation:
+              label: Saturation
+              selector:
+                text:
+            brightness:
+              label: Brightness
+              selector:
+                text:
+            transition_mode:
+              label: Transition Mode
+              selector:
+                select:
+                  options:
+                    - label: Time
+                      value: time
+                    - label: Speed
+                      value: speed
+            transition_value:
+              label: Transition Value (Time/Speed)
+              selector:
+                number:
+                  mode: slider
+                  step: 100
+                  unit_of_measurement: "ms or speed"
+            stay:
+              label: Stay Time
+              selector:
+                number:
+                  mode: slider
+                  step: 100
+                  unit_of_measurement: "ms"
+            queue_policy:
+              label: Queue Policy
+              required: false
+              selector:
+                select:
+                  options:
+                    - label: Single
+                      value: single
+                    - label: Back
+                      value: back
+                    - label: Front
+                      value: front
+                    - label: Front Reset
+                      value: front_reset
+                  mode: dropdown
+            requeue:
+              label: Requeue when finished
+              selector:
+                boolean:
+
+animation_bak:
+  name: Run an animation on the controller
+  description: >
+    Sets a sequence of colors using a list of HSV values.
+    The list must not be empty.
+  target:
+    entity:
+      domain: light
+  fields:
+    anim_definition:
       name: HSV Color List
       description: "A list of HSV objects. Each value can be 0-100 or a relative string like '+1000'."
       required: true
@@ -33,28 +107,59 @@ animation:
           description_field: percentage
           multiple: true
           fields:
-            name:
-              label: Name
+            hue:
+              label: Hue
               selector:
                 text:
-            percentage:
-              label: Percentage
+            saturation:
+              label: Saturation
               selector:
-                number:
-                  unit_of_measurement: "%"
-            queue_policy:
-              label: Queueing Policy
+                text:
+            brightness:
+              label: Brightness
+              selector:
+                text:
+            transition_mode:
+              label: Transition Mode
               selector:
                 select:
                   options:
-                    - value: back
-                      label: Back
-                    - value: front
-                      label: Front
-                    - value: front_reset
-                      label: Front Reset
-                    - value: single
-                      label: Single
+                    - label: Time
+                      value: time
+                    - label: Speed
+                      value: speed
+            transition_value:
+              label: Transition Value (Time/Speed)
+              selector:
+                number:
+                  mode: slider
+                  step: 100
+                  unit_of_measurement: "ms or speed"
+            stay:
+              label: Stay Time
+              selector:
+                number:
+                  mode: slider
+                  step: 100
+                  unit_of_measurement: "ms"
+            queue_policy:
+              label: Queue Policy
+              selector:
+                select:
+                  options:
+                    - label: Single
+                      value: single
+                    - label: Back
+                      value: back
+                    - label: Front
+                      value: front
+                    - label: Front Reset
+                      value: front_reset
+                  mode: dropdown
+            requeue:
+              label: Requeue
+              selector:
+                boolean:
 
 pause:
   name: Pause

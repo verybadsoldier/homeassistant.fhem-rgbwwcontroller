@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any, cast
+from homeassistant.exceptions import HomeAssistantError
 
 import voluptuous as vol
 import functools
@@ -46,12 +47,6 @@ SERVICE_STOP = "STOP"
 _logger = logging.getLogger(__name__)
 
 
-def _service_animation(self, call: ServiceCall) -> None:
-    anims = parse_animation_commands(call.data["anim_definition"])
-    ...
-
-
-
 def _service_pause(self, call: ServiceCall) -> None:
     if call.data["hsv_command_string"] == "fade":
         print("as")
@@ -86,7 +81,7 @@ async def async_setup_entry(
         _service_animation,
     )
 
-    #platform.async_register_entity_service(
+    # platform.async_register_entity_service(
     #    SERVICE_PAUSE,
     #    vol.Schema(
     #        {
@@ -97,7 +92,7 @@ async def async_setup_entry(
     #        }
     #    ),
     #    _service_pause,
-    #)
+    # )
 
 
 # we implement RgbwwStateUpdate but we cannot derive from here due to metaclass error
@@ -331,3 +326,26 @@ class RgbwwLight(LightEntity):
             "colortemp"
         ]["ww"]
         self.async_write_ha_state()
+
+    async def service_animation(self, call: ServiceCall) -> None:
+        try:
+            anims = parse_animation_commands(call.data["anim_definition"])
+            await self._controller.set_anim_commands(anims)
+        except ControllerUnavailableError as e:
+            # Catch specific errors from your controller library
+            _logger.error(
+                "Animation failed: Device at %s is unavailable. Error: %s",
+                self._controller.host,  # Assuming controller has an IP property
+                e,
+            )
+            # Optionally, re-raise as a HA error to notify the user in the UI
+            raise HomeAssistantError(
+                f"Failed to start animation: {self.name} is unavailable."
+            ) from e
+
+
+async def _service_animation(light_entity: RgbwwLight, call: ServiceCall) -> None:
+    """Handle the animation service call."""
+    _logger.debug("Animation service called for entity %s", light_entity.entity_id)
+
+    await light_entity.service_animation(call)

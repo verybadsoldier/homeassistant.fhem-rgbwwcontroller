@@ -27,9 +27,35 @@ animation:
       name: HSV Color List
       description: "A list of HSV objects. Each value can be 0-100 or a relative string like '+1000'."
       required: true
-      example: "120,0,5 5"
       selector:
-        text:
+        object:
+          label_field: name
+          description_field: percentage
+          multiple: true
+          fields:
+            name:
+              label: Name
+              selector:
+                text:
+            percentage:
+              label: Percentage
+              selector:
+                number:
+                  unit_of_measurement: "%"
+            queue_policy:
+              label: Queueing Policy
+              selector:
+                select:
+                  options:
+                    - value: back
+                      label: Back
+                    - value: front
+                      label: Front
+                    - value: front_reset
+                      label: Front Reset
+                    - value: single
+                      label: Single
+
 pause:
   name: Pause
   description: >
@@ -43,3 +69,4 @@ pause:
       name: Hue
       description: "Cancel hue channel animation"
       required: false
+

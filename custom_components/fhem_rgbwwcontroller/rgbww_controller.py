@@ -11,6 +11,7 @@ from aiohttp import ClientError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.core import HomeAssistant
 from homeassistant.util import aiohttp
+from .animation_syntax import AnimCommand
 
 _logger = logging.getLogger(__name__)
 
@@ -205,6 +206,10 @@ class RgbwwController:
             _logger.info("Closing active connection...")
             self._writer.close()
             await self._writer.wait_closed()
+
+    async def set_anim_commands(self, anim_commands: list[AnimCommand]) -> None:
+        cmds = {"cmds": [x.to_dict() for x in anim_commands]}
+        await self._send_http_post("color", payload=cmds)
 
     async def set_hsv(
         self,

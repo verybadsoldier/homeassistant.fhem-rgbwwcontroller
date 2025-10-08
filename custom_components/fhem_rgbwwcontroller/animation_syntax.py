@@ -8,14 +8,18 @@ from dataclasses import dataclass
 from typing import Optional
 from enum import StrEnum
 
+
 class QueueingPolicy(StrEnum):
-    BACK: "q"
-    FRONT: "f"
-    FRONT_RESET: "e"
+    BACK = "back"
+    FRONT = "front"
+    FRONT_RESET = "front_reset"
+    SINGLE = "single"
+
 
 @dataclass
 class AnimCommand:
     """Represents a single step in an animation sequence."""
+
     h: str | None = None
     s: str | None = None
     v: str | None = None
@@ -25,6 +29,42 @@ class AnimCommand:
     reque: bool | None = None
     queueing_policy: QueueingPolicy | None = None
     anim_name: str | None = None
+    direction_long: bool = False  # True if long, False if short
+
+    def to_dict(self) -> dict:
+        data = {"hsv": {}}
+
+        if self.h:
+            data["hsv"]["h"] = self.h
+
+        if self.s:
+            data["hsv"]["s"] = self.s
+
+        if self.v:
+            data["hsv"]["v"] = self.v
+
+        if self.fade_speed:
+            if self.fade is not None:
+                data["s"] = self.fade
+        elif self.fade is not None:
+            data["t"] = self.fade
+
+        if self.stay is not None:
+            data["stay"] = self.stay
+
+        if self.queueing_policy:
+            data["q"] = self.queueing_policy.value
+
+        if self.anim_name:
+            data["name"] = self.anim_name
+
+        if self.reque:
+            data["r"] = True
+
+        if self.direction_long:
+            data["d"] = True
+
+        return data
 
 
 def parse_anim_command(command_str: str) -> AnimCommand:
@@ -57,6 +97,8 @@ def parse_anim_command(command_str: str) -> AnimCommand:
 
                 if "r" in p:
                     cmd.reque = True
+                if "d" in p:
+                    cmd.direction_long = True
                 if "e" in p:
                     if cmd.queueing_policy is not None:
                         raise RuntimeError("cannot use multiple queuing policy flags")
@@ -70,9 +112,6 @@ def parse_anim_command(command_str: str) -> AnimCommand:
                         raise RuntimeError("cannot use multiple queuing policy flags")
                     cmd.queueing_policy = QueueingPolicy.BACK
     return cmd
-
-
-
 
 
 def parse_anim_command_(command_str: str) -> Optional[AnimCommand]:
@@ -97,14 +136,14 @@ def parse_anim_command_(command_str: str) -> Optional[AnimCommand]:
     # This handles cases where there might be no space between them.
     # Group 1: The entire HSV section (e.g., "124,5,12" or "+50,,")
     # Group 2: The rest of the string (e.g., "5000" or "300 5000s")
-    match = re.match(r'([^ ]+)(.*)', command_str.strip())
+    match = re.match(r"([^ ]+)(.*)", command_str.strip())
     if not match:
         return None
 
     hsv_part, time_part = match.groups()
 
     # --- Parse the HSV part ---
-    hsv_values = hsv_part.split(',')
+    hsv_values = hsv_part.split(",")
     if len(hsv_values) != 3:
         # Must have exactly three components for H, S, V
         return None
@@ -123,7 +162,7 @@ def parse_anim_command_(command_str: str) -> Optional[AnimCommand]:
             if not component:
                 continue
 
-            if component.lower().endswith('s'):
+            if component.lower().endswith("s"):
                 # This is a 'stay' time
                 stay_ms = int(component[:-1])
             else:
@@ -139,6 +178,7 @@ def parse_anim_command_(command_str: str) -> Optional[AnimCommand]:
 def parse_animation_commands(commands: str) -> list:
     return [parse_anim_command(x) for x in commands.split(";")]
 
+
 # --- Example Usage ---
 if __name__ == "__main__":
     test_strings = [
@@ -147,18 +187,16 @@ if __name__ == "__main__":
         "120,80,100",
         ",,100 2000s",
         "-10,+20,-30 100 500s",
-        "  10,20,30   600  700s  ", # Test with extra whitespace
+        "  10,20,30   600  700s  ",  # Test with extra whitespace
         "50,50,50",
         # Invalid cases
         "120,50",
         "120,50,60 abc",
         "",
-        " , , ", # This is valid: three empty strings
+        " , , ",  # This is valid: three empty strings
     ]
 
     print("--- Testing AnimCommand Parser ---")
     for test_str in test_strings:
         result = parse_anim_command(test_str)
         print(f"Input: '{test_str}' -> Output: {result}")
-
-

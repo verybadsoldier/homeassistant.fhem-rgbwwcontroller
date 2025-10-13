@@ -7,7 +7,9 @@ import time
 import httpx
 import netifaces
 
-from .rgbww_controller import RgbwwController
+from homeassistant.core import HomeAssistant
+
+from .rgbww_controller import ControllerUnavailableError, RgbwwController
 
 _logger = logging.getLogger(__name__)
 
@@ -51,14 +53,16 @@ def get_scan_range() -> ipaddress.IPv4Network | None:
         return None
 
 
-def scan(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwController]]:
+def scan(
+    hass: HomeAssistant, network: ipaddress.IPv4Network
+) -> list[asyncio.Task[RgbwwController]]:
     """Scans the given network for FHEM RGBWW Controller devices."""
     if network.prefixlen < 13:
         raise ValueError(
             "Network prefix is too broad. Please use a subnet mask of /12 or smaller."
         )
 
-    return [_check_ip(str(ip)) for ip in network.hosts()]
+    return [_check_ip(hass, str(ip)) for ip in network.hosts()]
 
 
 def scan_dummy(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwController]]:
@@ -79,14 +83,14 @@ async def _check_ip_dummy(ip: str) -> RgbwwController | None:
         return RgbwwController(ip)
 
 
-async def _check_ip(ip: str) -> RgbwwController | None:
-    controller = RgbwwController(ip)
+async def _check_ip(hass: HomeAssistant, ip: str) -> RgbwwController | None:
+    controller = RgbwwController(hass, ip)
 
     try:
         await controller.refresh()
         mac = controller.info["connection"]["mac"]
         _logger.debug("Found device at %s with MAC %s", ip, mac)
-    except (httpx.HTTPError, TimeoutError):
+    except ControllerUnavailableError:
         return None
     else:
         return controller

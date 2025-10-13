@@ -54,7 +54,7 @@ class RgbwwController:
 
     _TCP_PORT = 9090
     _WATCHDOG_DISCONNECT_TIMEOUT = 70
-    _HTTP_REQUEST_TIMEOUT = 30
+    _HTTP_REQUEST_TIMEOUT = 5
 
     def __init__(self, hass: HomeAssistant, host: str) -> None:
         self._hass = hass
@@ -226,7 +226,7 @@ class RgbwwController:
         #    "s": 1.0,  # fade speed
         #    "q": 1,
         # }
-        data: dict[str, any] = {"hsv": {}, "cmd": "fade", "q": 1}
+        data: dict[str, any] = {"hsv": {}}
 
         if hue is not None:
             data["hsv"]["h"] = hue
@@ -353,16 +353,14 @@ class RgbwwController:
         await self._refresh_color()
 
     async def _refresh_info(self) -> None:
-        json_data = await self._send_http_get("info")
-        self._info_cached = json.loads(json_data)
+        self._info_cached = await self._send_http_get("info")
 
     async def _refresh_config(self) -> None:
-        json_data = await self._send_http_get("config")
-        self._config_cached = json.loads(json_data)
+        self._config_cached = await self._send_http_get("config")
 
     async def _refresh_color(self) -> None:
         json_data = await self._send_http_get("color")
-        self._update_colorstate_from_json(json.loads(json_data))
+        self._update_colorstate_from_json(json_data)
 
     @property
     def info(self) -> dict:

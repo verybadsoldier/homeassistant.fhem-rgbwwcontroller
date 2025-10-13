@@ -43,6 +43,7 @@ from .rgbww_controller import ControllerUnavailableError, RgbwwController
 from .animation_syntax import parse_animation_commands
 
 SERVICE_ANIMATION = "animation"
+SERVICE_ANIMATION_CLI = "animation_cli"
 SERVICE_PAUSE = "PAUSE"
 SERVICE_CONTINUE = "CONTINUE"
 SERVICE_SKIP = "SKIP"
@@ -90,35 +91,45 @@ async def async_setup_entry(
 
     # This schema defines the structure for a single step in the animation sequence.
     # It corresponds to one object in the 'anim_definition' list.
-    ANIMATION_STEP_SCHEMA = vol.Schema({
-        vol.Required(ATTR_HUE): cv.string,
-        vol.Required(ATTR_SATURATION): cv.string,
-        vol.Required(ATTR_BRIGHTNESS): cv.string,
-        vol.Required(ATTR_TRANSITION_MODE): vol.In(["time", "speed"]),
-        vol.Required(ATTR_TRANSITION_VALUE): vol.All(vol.Coerce(int), vol.Range(min=0)),
-        vol.Optional(ATTR_STAY, default=0): vol.All(vol.Coerce(int), vol.Range(min=0)),
-        vol.Optional(ATTR_QUEUE_POLICY, default="single"): vol.In(
-            ["single", "back", "front", "front_reset"]
-        ),
-        vol.Optional(ATTR_REQUEUE, default=False): cv.boolean,
-    })
+    ANIMATION_STEP_SCHEMA = vol.Schema(
+        {
+            vol.Optional(ATTR_HUE, default=None): vol.Maybe(cv.string),
+            vol.Optional(ATTR_SATURATION, default=None): vol.Maybe(cv.string),
+            vol.Optional(ATTR_BRIGHTNESS, default=None): vol.Maybe(cv.string),
+            vol.Optional(ATTR_COLOR_TEMP_KELVIN, default=None): vol.Maybe(cv.string),
+            vol.Optional(ATTR_TRANSITION_MODE, default=None): vol.Maybe(
+                vol.In(["time", "speed"])
+            ),
+            vol.Optional(ATTR_TRANSITION_VALUE, default=None): vol.Maybe(
+                vol.All(vol.Coerce(int), vol.Range(min=0))
+            ),
+            vol.Optional(ATTR_STAY, default=None): vol.Maybe(
+                vol.All(vol.Coerce(int), vol.Range(min=0))
+            ),
+            vol.Optional(ATTR_QUEUE_POLICY, default=None): vol.Maybe(
+                vol.In(["single", "back", "front", "front_reset"])
+            ),
+            vol.Optional(ATTR_REQUEUE, default=None): vol.Maybe(cv.boolean),
+        }
+    )
 
     # This is the main schema for the 'animation' service call.
-    ANIMATION_SERVICE_SCHEMA = vol.Schema({
-        # Validate that an entity_id is provided, which is standard for services
-        # targeting an entity.
-        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
-
-        # Validate the main field 'anim_definition'.
-        vol.Required(ATTR_ANIM_DEFINITION): vol.All(
-            # 1. Ensure the input is a list.
-            cv.ensure_list,
-            # 2. Apply the ANIMATION_STEP_SCHEMA to each item in the list.
-            [ANIMATION_STEP_SCHEMA],
-            # 3. Ensure the list is not empty, as per your description.
-            vol.Length(min=1),
-        ),
-    })
+    ANIMATION_SERVICE_SCHEMA = vol.Schema(
+        {
+            # Validate that an entity_id is provided, which is standard for services
+            # targeting an entity.
+            vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+            # Validate the main field 'anim_definition'.
+            vol.Required(ATTR_ANIM_DEFINITION): vol.All(
+                # 1. Ensure the input is a list.
+                cv.ensure_list,
+                # 2. Apply the ANIMATION_STEP_SCHEMA to each item in the list.
+                [ANIMATION_STEP_SCHEMA],
+                # 3. Ensure the list is not empty, as per your description.
+                vol.Length(min=1),
+            ),
+        }
+    )
 
     # Register the service to set HSV with advanced options
     platform = entity_platform.async_get_current_platform()
@@ -128,9 +139,11 @@ async def async_setup_entry(
         _service_animation,
     )
 
-
-
-
+    platform.async_register_entity_service(
+        SERVICE_ANIMATION_CLI,
+        {vol.Required("anim_definition_command"): cv.string},
+        _service_animation_cli,
+    )
 
     # platform.async_register_entity_service(
     #    SERVICE_PAUSE,
@@ -182,6 +195,8 @@ class RgbwwLight(LightEntity):
             LightEntityFeature.TRANSITION | LightEntityFeature.FLASH
             # | LightEntityFeature.EFFECT
         )
+        # Initialize the attributes dictionary
+        self._attr_extra_state_attributes = {}
 
         # self._attr_effect_list = ["Pause", "Continue", "Skip", "Stop"]
         # self._attr_effect = None
@@ -235,7 +250,9 @@ class RgbwwLight(LightEntity):
                     self._attr_brightness = scale_ranged_value_to_int_range(
                         (0, 100), (0, 255), v
                     )
-
+                self._attr_extra_state_attributes["hsv_ct"] = (
+                    self._controller.color.color_temp
+                )
                 self._attr_is_on = v > 0
                 # self._attr_color_temp_kelvin = self._controller.color.color_temp
                 # self._attr_color_mode = ColorMode.HS
@@ -378,7 +395,7 @@ class RgbwwLight(LightEntity):
         ]["ww"]
         self.async_write_ha_state()
 
-    async def service_animation(self, call: ServiceCall) -> None:
+    async def service_animation_cli(self, call: ServiceCall) -> None:
         try:
             anims = parse_animation_commands(call.data["anim_definition"])
             await self._controller.set_anim_commands(anims)
@@ -394,9 +411,38 @@ class RgbwwLight(LightEntity):
                 f"Failed to start animation: {self.name} is unavailable."
             ) from e
 
+    async def service_animation(self, call: ServiceCall) -> None:
+        try:
+            anims = parse_animation_commands(call.data["anim_definition_command"])
+            await self._controller.set_anim_commands(anims)
+        except ControllerUnavailableError as e:
+            # Catch specific errors from your controller library
+            _logger.error(
+                "Animation failed: Device at %s is unavailable. Error: %s",
+                self._controller.host,  # Assuming controller has an IP property
+                e,
+            )
+            # Optionally, re-raise as a HA error to notify the user in the UI
+            raise HomeAssistantError(
+                f"Failed to start animation: {self.name} is unavailable."
+            ) from e
+        except Exception as e:
+            _logger.error(
+                "Animation failed: Error: %s",
+                self._controller.host,
+                e,
+            )
+            raise HomeAssistantError(f"Failed to start animation. Error: {e}") from e
+
 
 async def _service_animation(light_entity: RgbwwLight, call: ServiceCall) -> None:
     """Handle the animation service call."""
     _logger.debug("Animation service called for entity %s", light_entity.entity_id)
+
+    await light_entity.service_animation(call)
+
+
+async def _service_animation_cli(light_entity: RgbwwLight, call: ServiceCall) -> None:
+    _logger.debug("Animation CLI service called for entity %s", light_entity.entity_id)
 
     await light_entity.service_animation(call)

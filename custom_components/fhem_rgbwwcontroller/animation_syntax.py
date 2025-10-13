@@ -23,6 +23,7 @@ class AnimCommand:
     h: str | None = None
     s: str | None = None
     v: str | None = None
+    ct: str | None = None
     fade: int | None = None
     fade_speed: bool = False
     stay: int | None = None
@@ -43,6 +44,9 @@ class AnimCommand:
         if self.v:
             data["hsv"]["v"] = self.v
 
+        if self.ct:
+            data["hsv"]["ct"] = self.ct
+
         if self.fade_speed:
             if self.fade is not None:
                 data["s"] = self.fade
@@ -62,7 +66,7 @@ class AnimCommand:
             data["r"] = True
 
         if self.direction_long:
-            data["d"] = True
+            data["d"] = "long"
 
         return data
 
@@ -74,10 +78,14 @@ def parse_anim_command(command_str: str) -> AnimCommand:
 
     for p in parts:
         if "," in p:
-            hsv = p.split(",")
-            if len(hsv) != 3:
-                raise RuntimeError("HSV must have 3 parts")
-            cmd.h, cmd.s, cmd.v = hsv
+            hsv_parts = (
+                p.split(",") + [None] * 4
+            )  # pad with None to ensure at least 4 parts
+
+            # replace empty strings with None
+            hsv_parts = [part if part != "" else None for part in hsv_parts]
+
+            cmd.h, cmd.s, cmd.v, cmd.ct = hsv_parts[:4]  # take only first 4 parts
         else:
             is_fade_time_part = False
             if p.startswith("s") and p[1:].isdigit():
@@ -85,9 +93,9 @@ def parse_anim_command(command_str: str) -> AnimCommand:
                 cmd.fade_speed = True
 
             if is_fade_time_part or p.isdigit():
-                cmd.fade = int(p)
+                cmd.fade = float(p) * 1000
             elif p.endswith("s") and p[:-1].isdigit():
-                cmd.stay = int(p[:-1])
+                cmd.stay = float(p[:-1]) * 1000
             else:
                 # Flags
                 if ":" in p:

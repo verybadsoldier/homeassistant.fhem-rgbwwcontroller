@@ -1,3 +1,7 @@
+from config.custom_components.fhem_rgbwwcontroller.core.rgbww_controller import (
+    RgbwwController,
+)
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, Entity
 
 from .const import DOMAIN  # It's good practice to have a const.py for your domain
@@ -8,10 +12,14 @@ class RgbwwEntity(Entity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, device_id: str, controller: RgbwwController) -> None:
+    def __init__(
+        self, hass: HomeAssistant, controller: RgbwwController, device_id: str, **kwargs
+    ) -> None:
         """Initialize the base entity."""
+        super().__init__(**kwargs)
         self._device_id = device_id
         self._controller = controller
+        self.hass = hass
 
         # ✅ Define DeviceInfo once in this central location
         self._attr_device_info = DeviceInfo(

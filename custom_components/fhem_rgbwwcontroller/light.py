@@ -173,16 +173,15 @@ class RgbwwLight(RgbwwEntity, LightEntity):
 
     def __init__(
         self,
+        hass: HomeAssistant,
         controller: RgbwwController,
         config_entry: ConfigEntry,
     ) -> None:
         """Initialize the light."""
-        LightEntity.__init__(self)
-        RgbwwEntity.__init__(self, config_entry.unique_id, controller)
+        super().__init__(
+            hass=hass, controller=controller, device_id=config_entry.unique_id
+        )
 
-        self._controller = controller
-
-        # self.hass = hass
         # if unique_id is not None:
         #    self._attr_unique_id = unique_id + "_light"
         self._attr_name = config_entry.title + " Light"
@@ -200,32 +199,15 @@ class RgbwwLight(RgbwwEntity, LightEntity):
         # Initialize the attributes dictionary
         self._attr_extra_state_attributes = {}
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={
-                # Serial numbers are unique identifiers within a specific domain
-                (DOMAIN, self._config_entry.unique_id)
-            },
-            name=self.name,
-            manufacturer="FHEM Community :)",
-            model="FHEM RGBWW LED Controller",
-            # sw_version=f"{self._controller.info['git_version']} (WebApp:{self._controller.info['webapp_version']})",
-        )
-
         # self._attr_effect_list = ["Pause", "Continue", "Skip", "Stop"]
         # self._attr_effect = None
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to the events."""
-        self._controller.register_callback(self)
+        await super().async_added_to_hass()
 
         if self._controller.state_completed:
             self.on_state_completed()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Unsubscribe from the events."""
-        self._controller.unregister_callback(self)
-
-        await super().async_will_remove_from_hass()
 
     def on_clock_slave_status_update(self) -> None: ...  # noqa: D102
 
@@ -280,13 +262,14 @@ class RgbwwLight(RgbwwEntity, LightEntity):
         device_registry = dr.async_get(self.hass)
 
         device_entry = device_registry.async_get_device(
-            identifiers={(DOMAIN, self._config_entry.unique_id)}
+            identifiers={(DOMAIN, self._device_id)}
         )
 
         assert device_entry is not None
 
         updated_info = {
             "sw_version": f"{self._controller.info['git_version']} (WebApp:{self._controller.info['webapp_version']})",
+            # can not be altered later: "connections": {("mac", self._controller.info["connection"]["mac"])},
         }
 
         device_registry.async_update_device(

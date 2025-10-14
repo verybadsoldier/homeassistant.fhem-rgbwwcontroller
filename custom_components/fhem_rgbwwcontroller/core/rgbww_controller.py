@@ -120,34 +120,40 @@ class RgbwwController:
         Connects to a server and automatically reconnects if the connection is lost.
         """
         if self._simulation:
-            init = True
-            last_slave_offset = time.monotonic()
-            while not self._stop_event.is_set():
+            try:
+                init = True
+                last_slave_offset = time.monotonic()
+                while not self._stop_event.is_set():
 
-                def _get_rpc(name: str):
-                    method = name
-                    if method == "color":
-                        method = "color_event"
-                    return {"method": method, "params": _SIM_RESPONSES[name]}
+                    def _get_rpc(name: str):
+                        method = name
+                        if method == "color":
+                            method = "color_event"
+                        return {"method": method, "params": _SIM_RESPONSES[name]}
 
-                if init:
-                    await asyncio.sleep(0.3)
-                    self._on_json_message(_get_rpc("info"))
-                    await asyncio.sleep(0.3)
-                    self._on_json_message(_get_rpc("config"))
-                    await asyncio.sleep(0.3)
-                    self._on_json_message(_get_rpc("color"))
-                    self._on_json_message(_get_rpc("state_completed"))
-                    init = False
-                await asyncio.sleep(1)
+                    if init:
+                        await asyncio.sleep(0.3)
+                        self._on_json_message(_get_rpc("info"))
+                        await asyncio.sleep(0.3)
+                        self._on_json_message(_get_rpc("config"))
+                        await asyncio.sleep(0.3)
+                        self._on_json_message(_get_rpc("color"))
+                        self._on_json_message(_get_rpc("state_completed"))
+                        init = False
+                    await asyncio.sleep(1)
 
-                now = time.monotonic()
-                if now - last_slave_offset > 5:
-                    last_slave_offset = now
-                    status = _get_rpc("clock_slave_status")
-                    status["params"]["current_interval"] = random.randint(19000, 21000)
-                    status["params"]["offset"] = random.randint(-10, 10)
-                    self._on_json_message(status)
+                    now = time.monotonic()
+                    if now - last_slave_offset > 5:
+                        last_slave_offset = now
+                        status = _get_rpc("clock_slave_status")
+                        status["params"]["current_interval"] = random.randint(
+                            19000, 21000
+                        )
+                        status["params"]["offset"] = random.randint(-10, 10)
+                        self._on_json_message(status)
+            except Exception as e:
+                # Catch any other unexpected errors
+                _logger.exception("An unexpected error occurred", exc_info=e)
 
         while not self._stop_event.is_set():
             try:

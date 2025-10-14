@@ -1,23 +1,94 @@
-from homeassistant.helpers.entity import DeviceInfo, Entity
+"""Platform for sensor integration."""
 
-from .const import DOMAIN  # It's good practice to have a const.py for your domain
+from __future__ import annotations
+
+from config.custom_components.fhem_rgbwwcontroller.rgbww_entity import RgbwwEntity
+import homeassistant.helpers.device_registry as dr
+
+from datetime import timedelta
+import logging
+from typing import cast
+from .const import DOMAIN
+from config.custom_components.fhem_rgbwwcontroller.core.rgbww_controller import (
+    RgbwwController,
+)
+from homeassistant.config_entries import ConfigEntry
+import voluptuous as vol
+
+from homeassistant.components.sensor import (
+    PLATFORM_SCHEMA as SENSOR_PLATFORM_SCHEMA,
+    SensorDeviceClass,
+    SensorEntity,
+)
+from homeassistant.const import UnitOfEnergy
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.entity_platform import (
+    AddConfigEntryEntitiesCallback,
+    AddEntitiesCallback,
+)
+from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+
+_LOGGER = logging.getLogger(__name__)
+
+CONF_METER_NUMBER = "meter_number"
+
+SCAN_INTERVAL = timedelta(minutes=15)
+
+PLATFORM_SCHEMA = SENSOR_PLATFORM_SCHEMA.extend(
+    {vol.Required(CONF_METER_NUMBER): cv.string}
+)
 
 
-class MyControllerBaseEntity(Entity):
-    """A base class for all My RGBWW Controller entities."""
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    controller = cast(RgbwwController, entry.runtime_data)
 
-    _attr_has_entity_name = True
+    sync_offset = SyncOffsetSensor(hass, controller, entry)
 
-    def __init__(self, device_id: str, mac_address: str) -> None:
-        """Initialize the base entity."""
-        self._device_id = device_id
+    async_add_entities((sync_offset,))
 
-        # ✅ Define DeviceInfo once in this central location
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name="My Awesome RGBWW Controller",
-            manufacturer="Your Name Here",
-            model="RGBWW WiFi Controller v2",
-            sw_version="1.0",
-            connections={("mac", mac_address)} if mac_address else None,
+
+class SyncOffsetSensor(RgbwwEntity, SensorEntity):
+    # _attr_device_class = SensorDeviceClass.
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        controller: RgbwwController,
+        config_entry: ConfigEntry,
+    ):
+        """Initialize the sensor."""
+        super().__init__(
+            hass=hass, controller=controller, device_id=config_entry.unique_id
         )
+
+        self._available = None
+        self._attr_name = config_entry.title + " SyncOffet"
+        self._attr_unique_id = f"{config_entry.unique_id}_syncoffset"
+        self._attr_native_unit_of_measurement = "sync cycles"
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to the events."""
+        self._controller.register_callback(self)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from the events."""
+        self._controller.unregister_callback(self)
+
+        await super().async_will_remove_from_hass()
+
+    def on_update_color(self) -> None: ...
+    def on_connection_update(self) -> None: ...
+    def on_transition_finished(self, name: str, requeued: bool) -> None: ...
+    def on_config_update(self) -> None: ...
+    def on_state_completed(self) -> None:
+        self._attr_available = True
+
+    def on_clock_slave_status_update(self) -> None:
+        self._attr_native_value = self._controller.clock_slave_status["offset"]
+        # clockCurrentInterval
+        self.async_write_ha_state()

@@ -79,14 +79,14 @@ animation:
               label: Transition Value (Time/Speed)
               selector:
                 number:
-                  mode: slider
+                  mode: int
                   step: 100
                   unit_of_measurement: "ms or speed"
             stay:
               label: Stay Time
               selector:
                 number:
-                  mode: slider
+                  mode: int
                   step: 100
                   unit_of_measurement: "ms"
             queue_policy:

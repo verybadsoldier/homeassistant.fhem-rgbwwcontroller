@@ -12,15 +12,17 @@ from homeassistant.util import dt as dt_util
 
 from httpx import HTTPError
 import voluptuous as vol
+from homeassistant.config_entries import OptionsFlowWithReload
 
-from config.custom_components.fhem_rgbwwcontroller.rgbww_controller import (
+
+from config.custom_components.fhem_rgbwwcontroller.core.rgbww_controller import (
     RgbwwController,
 )
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.helpers.selector import TextSelector, selector
 
-from . import controller_autodetect
+from .core import controller_autodetect
 from .const import DISCOVERY_RESULTS, DOMAIN
 
 _logger = logging.getLogger(__name__)
@@ -221,7 +223,7 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def _create_entry_from_host(self, host: str, title: str):
-        controller = RgbwwController(host)
+        controller = RgbwwController(self.hass, host)
         try:
             # just check if reachable
             await controller.refresh()
@@ -270,9 +272,10 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle reconfiguration of the integration."""
         cur_data = self._get_reconfigure_entry().data
         errors: dict[str, str] = {}
+
         if user_input:
             host = user_input[CONF_HOST]
-            controller = RgbwwController(host)
+            controller = RgbwwController(self.hass, host)
             try:
                 # just check if reachable
                 await controller.refresh()
@@ -291,21 +294,20 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
                     data_updates=user_input,
                     reason="Host changed successfully.",
                 )
+        else:
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required(
+                            CONF_HOST,
+                            default=cur_data[CONF_HOST],
+                        ): TextSelector(),
+                    }
+                ),
+                errors=errors,
+            )
 
-        return self.async_show_form(
-            step_id="reconfigure",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_HOST, default=cur_data[CONF_HOST]
-                    ): TextSelector(),
-                }
-            ),
-            errors=errors,
-        )
-
-
-from homeassistant.config_entries import OptionsFlowWithReload
 
 OPTIONS_SCHEMA = vol.Schema(
     {
@@ -319,13 +321,22 @@ class RgbwwFlowHandler(OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
-        return self.async_show_menu(
-            step_id="user",
-            menu_options=["Add one controller", "Scan network for controllers"],
-            description_placeholders={
-                "model": "Example model",
-            },
+        return self.async_show_form(
+            step_id="mqtt",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "mqtt.enabled",
+                    ): bool,
+                    vol.Required(
+                        "mqtt.host",
+                    ): str,
+                }
+            ),
+            errors=errors,
         )

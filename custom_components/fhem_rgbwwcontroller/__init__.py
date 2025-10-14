@@ -8,7 +8,7 @@ from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from .const import DOMAIN
-from .rgbww_controller import RgbwwController
+from .core.rgbww_controller import RgbwwController
 from homeassistant.helpers import device_registry, entity_platform
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import (
@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 _logger = logging.getLogger(__name__)
 
-_PLATFORMS: list[Platform] = [Platform.LIGHT]
+_PLATFORMS: list[Platform] = [Platform.LIGHT, Platform.SENSOR]
 
 ATTR_NAME = "name"
 DEFAULT_NAME = "World"

@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any, cast
+from config.custom_components.fhem_rgbwwcontroller.rgbww_entity import RgbwwEntity
 from homeassistant.exceptions import HomeAssistantError
 
 import voluptuous as vol
@@ -38,9 +39,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .rgbww_controller import ControllerUnavailableError, RgbwwController
+from .core.rgbww_controller import ControllerUnavailableError, RgbwwController
 
-from .animation_syntax import parse_animation_commands
+from .core.animation_syntax import parse_animation_commands
 
 SERVICE_ANIMATION = "animation"
 SERVICE_ANIMATION_CLI = "animation_cli"
@@ -62,27 +63,11 @@ def _service_continue(self, call: ServiceCall) -> None:
         print("as")
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddConfigEntryEntitiesCallback,
-) -> None:
-    """Set up Abode light devices."""
-    controller = cast(RgbwwController, entry.runtime_data)
-
-    rgb = RgbwwLight(
-        hass,
-        controller,
-        entry,
-    )
-
-    async_add_entities((rgb,))
-
+def _register_animation_service():
     # Define constants for service field names for easier maintenance
     ATTR_ANIM_DEFINITION = "anim_definition"
     ATTR_HUE = "hue"
     ATTR_SATURATION = "saturation"
-    ATTR_BRIGHTNESS = "brightness"
     ATTR_TRANSITION_MODE = "transition_mode"
     ATTR_TRANSITION_VALUE = "transition_value"
     ATTR_STAY = "stay"
@@ -114,22 +99,20 @@ async def async_setup_entry(
     )
 
     # This is the main schema for the 'animation' service call.
-    ANIMATION_SERVICE_SCHEMA = vol.Schema(
-        {
-            # Validate that an entity_id is provided, which is standard for services
-            # targeting an entity.
-            vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
-            # Validate the main field 'anim_definition'.
-            vol.Required(ATTR_ANIM_DEFINITION): vol.All(
-                # 1. Ensure the input is a list.
-                cv.ensure_list,
-                # 2. Apply the ANIMATION_STEP_SCHEMA to each item in the list.
-                [ANIMATION_STEP_SCHEMA],
-                # 3. Ensure the list is not empty, as per your description.
-                vol.Length(min=1),
-            ),
-        }
-    )
+    ANIMATION_SERVICE_SCHEMA = {
+        # Validate that an entity_id is provided, which is standard for services
+        # targeting an entity.
+        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+        # Validate the main field 'anim_definition'.
+        vol.Required(ATTR_ANIM_DEFINITION): vol.All(
+            # 1. Ensure the input is a list.
+            cv.ensure_list,
+            # 2. Apply the ANIMATION_STEP_SCHEMA to each item in the list.
+            [ANIMATION_STEP_SCHEMA],
+            # 3. Ensure the list is not empty, as per your description.
+            vol.Length(min=1),
+        ),
+    }
 
     # Register the service to set HSV with advanced options
     platform = entity_platform.async_get_current_platform()
@@ -139,11 +122,31 @@ async def async_setup_entry(
         _service_animation,
     )
 
+    ANIMATION_CLIR_SERVICE_SCHEMA = {vol.Required("anim_definition_command"): cv.string}
     platform.async_register_entity_service(
         SERVICE_ANIMATION_CLI,
-        {vol.Required("anim_definition_command"): cv.string},
+        ANIMATION_CLIR_SERVICE_SCHEMA,
         _service_animation_cli,
     )
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Set up Abode light devices."""
+    controller = cast(RgbwwController, entry.runtime_data)
+
+    rgb = RgbwwLight(
+        hass,
+        controller,
+        entry,
+    )
+
+    async_add_entities((rgb,))
+
+    _register_animation_service()
 
     # platform.async_register_entity_service(
     #    SERVICE_PAUSE,
@@ -160,7 +163,7 @@ async def async_setup_entry(
 
 
 # we implement RgbwwStateUpdate but we cannot derive from here due to metaclass error
-class RgbwwLight(LightEntity):
+class RgbwwLight(RgbwwEntity, LightEntity):
     _attr_has_entity_name = True
     _attr_name = None
     _attr_should_poll = False
@@ -170,21 +173,20 @@ class RgbwwLight(LightEntity):
 
     def __init__(
         self,
-        hass: HomeAssistant,
         controller: RgbwwController,
-        entry: ConfigEntry,
+        config_entry: ConfigEntry,
     ) -> None:
         """Initialize the light."""
-        super().__init__()
+        LightEntity.__init__(self)
+        RgbwwEntity.__init__(self, config_entry.unique_id, controller)
 
-        self._config_entry = entry
         self._controller = controller
 
         # self.hass = hass
         # if unique_id is not None:
         #    self._attr_unique_id = unique_id + "_light"
-        self._attr_name = entry.title + " Light"
-        self._attr_unique_id = f"{entry.unique_id}_lightunique"
+        self._attr_name = config_entry.title + " Light"
+        self._attr_unique_id = f"{config_entry.unique_id}_lightunique"
 
         self._attr_supported_color_modes = {
             # ColorMode.ONOFF,
@@ -197,6 +199,17 @@ class RgbwwLight(LightEntity):
         )
         # Initialize the attributes dictionary
         self._attr_extra_state_attributes = {}
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={
+                # Serial numbers are unique identifiers within a specific domain
+                (DOMAIN, self._config_entry.unique_id)
+            },
+            name=self.name,
+            manufacturer="FHEM Community :)",
+            model="FHEM RGBWW LED Controller",
+            # sw_version=f"{self._controller.info['git_version']} (WebApp:{self._controller.info['webapp_version']})",
+        )
 
         # self._attr_effect_list = ["Pause", "Continue", "Skip", "Stop"]
         # self._attr_effect = None
@@ -213,6 +226,8 @@ class RgbwwLight(LightEntity):
         self._controller.unregister_callback(self)
 
         await super().async_will_remove_from_hass()
+
+    def on_clock_slave_status_update(self) -> None: ...  # noqa: D102
 
     def on_update_color(self) -> None:  # noqa: D102
         if not self._controller.state_completed:
@@ -261,31 +276,11 @@ class RgbwwLight(LightEntity):
         self._attr_color_mode = ColorMode.HS
         self.async_write_ha_state()
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device info."""
-        di = DeviceInfo(
-            identifiers={
-                # Serial numbers are unique identifiers within a specific domain
-                (DOMAIN, self.unique_id)
-            },
-            name=self.name,
-            manufacturer="FHEM Community :)",
-            model="FHEM RGBWW LED Controller",
-            # sw_version=f"{self._controller.info['git_version']} (WebApp:{self._controller.info['webapp_version']})",
-        )
-
-        if self._controller.connected:
-            di["sw_version"] = (
-                f"{self._controller.info['git_version']} (WebApp:{self._controller.info['webapp_version']})"
-            )
-        return di
-
     def _update_ha_device(self) -> None:
         device_registry = dr.async_get(self.hass)
 
         device_entry = device_registry.async_get_device(
-            identifiers={(DOMAIN, self.unique_id)}
+            identifiers={(DOMAIN, self._config_entry.unique_id)}
         )
 
         assert device_entry is not None

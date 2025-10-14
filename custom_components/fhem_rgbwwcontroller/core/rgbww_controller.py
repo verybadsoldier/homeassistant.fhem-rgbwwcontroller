@@ -3,8 +3,11 @@ import asyncio
 import contextlib
 import enum
 import json
+import os
 import logging
 from dataclasses import dataclass
+import random
+import time
 from typing import Literal, Protocol
 import async_timeout
 from aiohttp import ClientError
@@ -33,6 +36,7 @@ class RgbwwStateUpdate(Protocol):
     def on_transition_finished(name: str, requeued: bool) -> None: ...
     def on_config_update() -> None: ...
     def on_state_completed() -> None: ...
+    def on_clock_slave_status_update() -> None: ...
 
 
 @dataclass
@@ -47,6 +51,31 @@ class _ColorState:
     raw_b: int
     raw_ww: int
     raw_cw: int
+
+
+_SIM_RESPONSES = {
+    "info": {
+        "firmware": "9.0-sim",
+        "heap_free": 21123,
+        "connection": {"mac": "a020a60836aa"},
+        "git_version": "9.00-sim.git",
+        "webapp_version": "1.0-Shojo",
+    },
+    "config": {
+        "network": {"mqtt": {"enabled": True, "server": "mqtthost"}},
+        "color": {"colortemp": {"cw": 5000, "ww": 2700}},
+    },
+    "color": {
+        "hsv": {"h": 54, "s": 50, "v": 50, "ct": 3000},
+        "rgbww": {"r": 500, "g": 500, "b": 500, "cw": 500, "ww": 500},
+        "mode": "hsv",
+    },
+    "clock_slave_status": {
+        "offset": 0,
+        "current_interval": 50,
+    },
+    "state_completed": {},
+}
 
 
 class RgbwwController:
@@ -64,12 +93,14 @@ class RgbwwController:
         self._connection_task: asyncio.Task | None = None
         self._info_cached: dict | None = None
         self._config_cached: dict | None = None
+        self._clock_slave_status_cache: dict | None = None
 
         self._callbacks: list[RgbwwStateUpdate] = []
         self._buffer = ""
         self._stop_event = asyncio.Event()
         self._writer: asyncio.StreamWriter | None = None
         self.state_completed = False
+        self._simulation = os.getenv("SIMULATION")
 
     def _consume_json_msg(self) -> dict | None:
         try:
@@ -88,6 +119,36 @@ class RgbwwController:
         """
         Connects to a server and automatically reconnects if the connection is lost.
         """
+        if self._simulation:
+            init = True
+            last_slave_offset = time.monotonic()
+            while not self._stop_event.is_set():
+
+                def _get_rpc(name: str):
+                    method = name
+                    if method == "color":
+                        method = "color_event"
+                    return {"method": method, "params": _SIM_RESPONSES[name]}
+
+                if init:
+                    await asyncio.sleep(0.3)
+                    self._on_json_message(_get_rpc("info"))
+                    await asyncio.sleep(0.3)
+                    self._on_json_message(_get_rpc("config"))
+                    await asyncio.sleep(0.3)
+                    self._on_json_message(_get_rpc("color"))
+                    self._on_json_message(_get_rpc("state_completed"))
+                    init = False
+                await asyncio.sleep(1)
+
+                now = time.monotonic()
+                if now - last_slave_offset > 5:
+                    last_slave_offset = now
+                    status = _get_rpc("clock_slave_status")
+                    status["params"]["current_interval"] = random.randint(19000, 21000)
+                    status["params"]["offset"] = random.randint(-10, 10)
+                    self._on_json_message(status)
+
         while not self._stop_event.is_set():
             try:
                 # 1. Attempt to connect
@@ -128,7 +189,7 @@ class RgbwwController:
                     self._buffer += data.decode("utf-8")
 
                     while (json_msg := self._consume_json_msg()) is not None:
-                        self.on_json_message(json_msg)
+                        self._on_json_message(json_msg)
                     # -----------------------------
 
             except (ConnectionRefusedError, OSError) as e:
@@ -289,7 +350,7 @@ class RgbwwController:
         if "mode" in json_msg:
             self.color.color_mode = json_msg["mode"]
 
-    def on_json_message(self, json_msg: dict) -> None:
+    def _on_json_message(self, json_msg: dict) -> None:
         # ANY data from the server resets the timer.
         match json_msg["method"]:
             case "color_event":
@@ -327,6 +388,10 @@ class RgbwwController:
                 self.state_completed = True
                 for x in self._callbacks:
                     x.on_state_completed()
+            case "clock_slave_status":
+                self._clock_slave_status_cache = json_msg["params"]
+                for x in self._callbacks:
+                    x.on_clock_slave_status_update()
 
             # elsif ( $obj->{method} eq "keep_alive" ) {
             # Log3( $hash, 4, "$hash->{NAME}: EspLedController_Read: keep_alive received" );
@@ -378,7 +443,16 @@ class RgbwwController:
     def device_name(self) -> str:
         return self._config_cached["general"]["device_name"]
 
+    @property
+    def clock_slave_status(self) -> dict:
+        return self._clock_slave_status_cache
+
     async def _send_http_post(self, endpoint: str, payload: dict[str, any]) -> None:
+        if self._simulation:
+            if endpoint == "config":
+                return {"as": "as"}
+            raise RuntimeError("Endpoint not supported by simulation")
+
         headers = {
             "user-agent": "homeassistant-fhem_rgbwwcontroller",
             "Accept": "application/json",
@@ -406,6 +480,11 @@ class RgbwwController:
             ) from err
 
     async def _send_http_get(self, endpoint: str) -> str:
+        if self._simulation:
+            if endpoint not in _SIM_RESPONSES:
+                raise RuntimeError("Endpoint not supported by simulation")
+            return _SIM_RESPONSES[endpoint]
+
         headers = {
             "user-agent": "homeassistant-fhem_rgbwwcontroller",
             "Accept": "application/json",

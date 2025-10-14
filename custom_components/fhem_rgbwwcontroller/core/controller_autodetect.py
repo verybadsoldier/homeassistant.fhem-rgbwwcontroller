@@ -1,3 +1,4 @@
+import os
 import random
 import asyncio
 import ipaddress
@@ -62,17 +63,10 @@ def scan(
             "Network prefix is too broad. Please use a subnet mask of /12 or smaller."
         )
 
+    if os.getenv("SIMULATION"):
+        return [_check_ip_dummy(hass, str(ip)) for ip in network.hosts()]
+
     return [_check_ip(hass, str(ip)) for ip in network.hosts()]
-
-
-def scan_dummy(network: ipaddress.IPv4Network) -> list[asyncio.Task[RgbwwController]]:
-    """Scans the given network for FHEM RGBWW Controller devices."""
-    if network.prefixlen < 13:
-        raise ValueError(
-            "Network prefix is too broad. Please use a subnet mask of /12 or smaller."
-        )
-
-    return [_check_ip_dummy(str(ip)) for ip in network.hosts()]
 
 
 async def _check_ip_dummy(ip: str) -> RgbwwController | None:

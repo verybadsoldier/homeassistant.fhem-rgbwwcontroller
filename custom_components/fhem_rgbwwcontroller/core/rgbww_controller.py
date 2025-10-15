@@ -11,6 +11,7 @@ import time
 from typing import Literal, Protocol
 import async_timeout
 from aiohttp import ClientError
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.core import HomeAssistant
 from homeassistant.util import aiohttp
@@ -64,6 +65,7 @@ _SIM_RESPONSES = {
     "config": {
         "network": {"mqtt": {"enabled": True, "server": "mqtthost"}},
         "color": {"colortemp": {"cw": 5000, "ww": 2700}},
+        "sync": {"cmd_slave_enabled": True},
     },
     "color": {
         "hsv": {"h": 54, "s": 50, "v": 50, "ct": 3000},
@@ -339,6 +341,27 @@ class RgbwwController:
 
         await self._send_http_post("color", data)
 
+    async def set_channel_command(
+        self,
+        command: Literal["pause", "continue", "stop"],
+        channel_hue: bool,
+        channel_sat: bool,
+        channel_val: bool,
+    ) -> None:
+        channels = []
+        data: dict[str, any] = {"channels": channels}
+
+        if channel_hue:
+            channels.append("h")
+
+        if channel_sat:
+            channels.append("s")
+
+        if channel_val:
+            channels.append("v")
+
+        await self._send_http_post(command, data)
+
     def _update_colorstate_from_json(self, json_msg: dict) -> None:
         if "hsv" in json_msg:
             self.color.hue = json_msg["hsv"].get("h", self.color.hue)
@@ -457,7 +480,7 @@ class RgbwwController:
         if self._simulation:
             if endpoint == "config":
                 return {"as": "as"}
-            raise RuntimeError("Endpoint not supported by simulation")
+            raise HomeAssistantError("Endpoint not supported by simulation")
 
         headers = {
             "user-agent": "homeassistant-fhem_rgbwwcontroller",
@@ -488,7 +511,7 @@ class RgbwwController:
     async def _send_http_get(self, endpoint: str) -> str:
         if self._simulation:
             if endpoint not in _SIM_RESPONSES:
-                raise RuntimeError("Endpoint not supported by simulation")
+                raise HomeAssistantError("Endpoint not supported by simulation")
             return _SIM_RESPONSES[endpoint]
 
         headers = {

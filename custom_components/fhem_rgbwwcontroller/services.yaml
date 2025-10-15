@@ -79,14 +79,14 @@ animation:
               label: Transition Value (Time/Speed)
               selector:
                 number:
-                  mode: int
+                  mode: box
                   step: 100
                   unit_of_measurement: "ms or speed"
             stay:
               label: Stay Time
               selector:
                 number:
-                  mode: int
+                  mode: box
                   step: 100
                   unit_of_measurement: "ms"
             queue_policy:
@@ -153,14 +153,14 @@ animation_bak:
               label: Transition Value (Time/Speed)
               selector:
                 number:
-                  mode: slider
+                  mode: box
                   step: 100
                   unit_of_measurement: "ms or speed"
             stay:
               label: Stay Time
               selector:
                 number:
-                  mode: slider
+                  mode: box
                   step: 100
                   unit_of_measurement: "ms"
             queue_policy:
@@ -182,17 +182,47 @@ animation_bak:
               selector:
                 boolean:
 
-pause:
-  name: Pause
-  description: >
-    Pauses the current HSV animation on all or some channels.
-  fields:
-    all_channels:
-      name: All Channels
-      description: "Cancel all channels"
-      required: true
-    channel_h:
-      name: Hue
-      description: "Cancel hue channel animation"
-      required: false
+# Service definition for the custom integration.
+# This service will be callable as 'your_domain.control_channel'.
+control_channel:
+  name: Control Channel
+  description: Sends a control command to an entity's channel.
 
+  # Definition of the fields the user can interact with in the UI.
+  fields:
+    # The 'command' field is rendered as a dropdown menu.
+    command:
+      name: Command
+      description: The command to be executed.
+      required: true
+      example: "pause"
+      # The 'select' selector creates the dropdown menu.
+      selector:
+        select:
+          # The options available in the dropdown.
+          # These must exactly match the values in your Voluptuous schema.
+          options:
+            - "pause"
+            - "stop"
+            - "continue"
+
+    channels:
+      name: Target Channels
+      description: Deselect any channels you do not want the command to apply to.
+      required: true
+
+      default:
+        - "hue"
+        - "saturation"
+        - "value"
+
+      selector:
+        select:
+          multiple: true
+          options:
+            - "hue"
+            - "saturation"
+            - "value"
+  target:
+    entity:
+      domain: light

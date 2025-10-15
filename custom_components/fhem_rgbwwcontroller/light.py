@@ -53,14 +53,34 @@ SERVICE_STOP = "STOP"
 _logger = logging.getLogger(__name__)
 
 
-def _service_pause(self, call: ServiceCall) -> None:
-    if call.data["hsv_command_string"] == "fade":
-        print("as")
+def _register_channel_services():
+    async def _service_channel(light_entity: RgbwwLight, call: ServiceCall) -> None:
+        """Handle the channel service call."""
+        _logger.debug(
+            "Channel service called for entity %s. Channel: %s",
+            light_entity.entity_id,
+            call.service,
+        )
 
+        await light_entity.service_channel(call)
 
-def _service_continue(self, call: ServiceCall) -> None:
-    if call.data["hsv_command_string"] == "fade":
-        print("as")
+    CHANNEL_SERVICE_SCHEMA = {
+        # Validate that an entity_id is provided, which is standard for services
+        # targeting an entity.
+        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+        # Validate the main field 'anim_definition'.
+        vol.Required("command"): vol.In(["pause", "stop", "continue"]),
+        vol.Required("channel_hue"): cv.boolean,
+        vol.Required("channel_sat"): cv.boolean,
+        vol.Required("channel_val"): cv.boolean,
+    }
+
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        "control_channel",
+        CHANNEL_SERVICE_SCHEMA,
+        _service_channel,
+    )
 
 
 def _register_animation_service():
@@ -114,6 +134,12 @@ def _register_animation_service():
         ),
     }
 
+    async def _service_animation(light_entity: RgbwwLight, call: ServiceCall) -> None:
+        """Handle the animation service call."""
+        _logger.debug("Animation service called for entity %s", light_entity.entity_id)
+
+        await light_entity.service_animation(call)
+
     # Register the service to set HSV with advanced options
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -121,6 +147,15 @@ def _register_animation_service():
         ANIMATION_SERVICE_SCHEMA,
         _service_animation,
     )
+
+    async def _service_animation_cli(
+        light_entity: RgbwwLight, call: ServiceCall
+    ) -> None:
+        _logger.debug(
+            "Animation CLI service called for entity %s", light_entity.entity_id
+        )
+
+        await light_entity.service_animation(call)
 
     ANIMATION_CLIR_SERVICE_SCHEMA = {vol.Required("anim_definition_command"): cv.string}
     platform.async_register_entity_service(
@@ -147,19 +182,7 @@ async def async_setup_entry(
     async_add_entities((rgb,))
 
     _register_animation_service()
-
-    # platform.async_register_entity_service(
-    #    SERVICE_PAUSE,
-    #    vol.Schema(
-    #        {
-    #            vol.Required("all_channels"): bool,
-    #            vol.Optional("channel_h"): bool,
-    #            vol.Optional("channel_s"): bool,
-    #            vol.Optional("channel_v"): bool,
-    #        }
-    #    ),
-    #    _service_pause,
-    # )
+    _register_channel_services()
 
 
 # we implement RgbwwStateUpdate but we cannot derive from here due to metaclass error
@@ -412,15 +435,30 @@ class RgbwwLight(RgbwwEntity, LightEntity):
             )
             raise HomeAssistantError(f"Failed to start animation. Error: {e}") from e
 
+    async def service_channel(self, call: ServiceCall) -> None:
+        try:
+            await self._controller.set_channel_command(
+                call.data["command"],
+                call.data["channel_hue"],
+                call.data["channel_sat"],
+                call.data["channel_val"],
+            )
 
-async def _service_animation(light_entity: RgbwwLight, call: ServiceCall) -> None:
-    """Handle the animation service call."""
-    _logger.debug("Animation service called for entity %s", light_entity.entity_id)
-
-    await light_entity.service_animation(call)
-
-
-async def _service_animation_cli(light_entity: RgbwwLight, call: ServiceCall) -> None:
-    _logger.debug("Animation CLI service called for entity %s", light_entity.entity_id)
-
-    await light_entity.service_animation(call)
+        except ControllerUnavailableError as e:
+            # Catch specific errors from your controller library
+            _logger.error(
+                "Channel command failed: Device at %s is unavailable. Error: %s",
+                self._controller.host,  # Assuming controller has an IP property
+                e,
+            )
+            # Optionally, re-raise as a HA error to notify the user in the UI
+            raise HomeAssistantError(
+                f"Failed to send channel command: {self.name} is unavailable."
+            ) from e
+        except Exception as e:
+            _logger.error(
+                "Animation failed: Error: %s",
+                self._controller.host,
+                e,
+            )
+            raise HomeAssistantError(f"Failed to start animation. Error: {e}") from e

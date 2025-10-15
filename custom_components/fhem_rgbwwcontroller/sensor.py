@@ -66,7 +66,6 @@ class SyncOffsetSensor(RgbwwEntity, SensorEntity):
             hass=hass, controller=controller, device_id=config_entry.unique_id
         )
 
-        self._available = None
         self._attr_name = config_entry.title + " SyncOffet"
         self._attr_unique_id = f"{config_entry.unique_id}_syncoffset"
         self._attr_native_unit_of_measurement = "sync cycles"
@@ -84,7 +83,11 @@ class SyncOffsetSensor(RgbwwEntity, SensorEntity):
     def on_update_color(self) -> None: ...
     def on_connection_update(self) -> None: ...
     def on_transition_finished(self, name: str, requeued: bool) -> None: ...
-    def on_config_update(self) -> None: ...
+
+    def on_config_update(self) -> None:
+        self._attr_available = self._controller.config["sync"]["cmd_slave_enabled"]
+        self.async_write_ha_state()
+
     def on_state_completed(self) -> None:
         self._attr_available = True
 

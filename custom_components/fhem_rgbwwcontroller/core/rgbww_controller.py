@@ -344,21 +344,23 @@ class RgbwwController:
     async def set_channel_command(
         self,
         command: Literal["pause", "continue", "stop"],
-        channel_hue: bool,
-        channel_sat: bool,
-        channel_val: bool,
+        channels: list[str],
     ) -> None:
-        channels = []
+        channel_name_map = {
+            "hue": "h",
+            "saturation": "s",
+            "value": "v",
+            "color_temp": "ct",
+        }
+        if command not in ["pause", "continue", "stop"]:
+            raise ValueError("Invalid command")
+
+        for ch in channels:
+            if ch not in channel_name_map:
+                raise ValueError(f"Invalid channel: {ch}")
+
+        channels = [channel_name_map[ch] for ch in channels]
         data: dict[str, any] = {"channels": channels}
-
-        if channel_hue:
-            channels.append("h")
-
-        if channel_sat:
-            channels.append("s")
-
-        if channel_val:
-            channels.append("v")
 
         await self._send_http_post(command, data)
 

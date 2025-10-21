@@ -64,21 +64,24 @@ def _register_channel_services():
 
         await light_entity.service_channel(call)
 
-    CHANNEL_SERVICE_SCHEMA = {
-        # Validate that an entity_id is provided, which is standard for services
-        # targeting an entity.
-        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
-        # Validate the main field 'anim_definition'.
-        vol.Required("command"): vol.In(["pause", "stop", "continue"]),
-        vol.Required("channel_hue"): cv.boolean,
-        vol.Required("channel_sat"): cv.boolean,
-        vol.Required("channel_val"): cv.boolean,
+    COMMAND_OPTIONS = ["pause", "stop", "continue"]
+    CHANNEL_OPTIONS = ["hue", "saturation", "value", "color_temp"]
+
+    # Definition des Service-Schemas
+    CONTROL_CHANNEL_SCHEMA = {
+        vol.Required("entity_id"): cv.entity_ids,
+        # Validierung für das 'command'-Feld
+        vol.Required("command"): vol.In(COMMAND_OPTIONS),
+        # Validierung für das 'channels'-Feld
+        # 'cv.ensure_list' stellt sicher, dass der Input eine Liste ist (auch wenn nur ein Element kommt).
+        # Der innere Teil validiert, dass jeder String in der Liste ein gültiger Kanal ist.
+        vol.Required("channels"): cv.ensure_list(vol.In(CHANNEL_OPTIONS)),
     }
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         "control_channel",
-        CHANNEL_SERVICE_SCHEMA,
+        CONTROL_CHANNEL_SCHEMA,
         _service_channel,
     )
 
@@ -439,9 +442,7 @@ class RgbwwLight(RgbwwEntity, LightEntity):
         try:
             await self._controller.set_channel_command(
                 call.data["command"],
-                call.data["channel_hue"],
-                call.data["channel_sat"],
-                call.data["channel_val"],
+                call.data["channels"],
             )
 
         except ControllerUnavailableError as e:

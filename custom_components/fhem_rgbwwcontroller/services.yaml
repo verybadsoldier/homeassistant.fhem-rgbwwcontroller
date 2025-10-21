@@ -215,6 +215,7 @@ control_channel:
         - "hue"
         - "saturation"
         - "value"
+        - "color_temp"
 
       selector:
         select:
@@ -223,6 +224,7 @@ control_channel:
             - "hue"
             - "saturation"
             - "value"
+            - "color_temp"
   target:
     entity:
       domain: light

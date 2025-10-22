@@ -1,24 +1,28 @@
 import asyncio
 import contextlib
-from dataclasses import dataclass
-import enum
+from dataclasses import asdict, dataclass
 import json
 import logging
 import os
 import random
 import time
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol, Self
 
 from aiohttp import ClientError
-import async_timeout
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .animation_syntax import AnimCommand
+from .color_commands import ColorCommandBase, ColorCommandHsv, ColorCommandRgbww
 
 _logger = logging.getLogger(__name__)
+
+_HTTP_HEADERS = {
+    "user-agent": "homeassistant-fhem_rgbwwcontroller",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+}
 
 
 class ControllerUnavailableError(Exception):
@@ -28,12 +32,13 @@ class ControllerUnavailableError(Exception):
 
 
 class RgbwwStateUpdate(Protocol):
-    def on_update_color() -> None: ...
-    def on_connection_update() -> None: ...
-    def on_transition_finished(name: str, requeued: bool) -> None: ...
-    def on_config_update() -> None: ...
-    def on_state_completed() -> None: ...
-    def on_clock_slave_status_update() -> None: ...
+    def on_update_color(self) -> None: ...
+    def on_connection_update(self) -> None: ...
+    def on_transition_finished(self, name: str, requeued: bool) -> None: ...
+    def on_config_update(self) -> None: ...
+    def on_state_completed(self) -> None: ...
+    def on_clock_slave_status_update(self) -> None: ...
+    def delme_func(self) -> None: ...
 
 
 @dataclass
@@ -50,7 +55,79 @@ class _ColorState:
     raw_cw: int
 
 
-_SIM_RESPONSES = {
+@dataclass
+class ControllerColorHsv:
+    h: str | None = None
+    s: str | None = None
+    v: str | None = None
+    ct: str | None = None
+
+
+@dataclass
+class ControllerColorRaw:
+    r: str | None = None
+    g: str | None = None
+    b: str | None = None
+    cw: str | None = None
+    ww: str | None = None
+
+
+@dataclass
+class ControllerColorCommand:
+    hsv: ControllerColorHsv | None = None
+    raw: ControllerColorRaw | None = None
+    s: int | None = None
+    t: int | None = None
+    stay: int | None = None
+    q: None = None
+    name: str | None = None
+    r: bool | None = None
+    d: Literal["long", "short"] | None = None
+
+    @staticmethod
+    def _gather_base_args(cmd: ColorCommandBase) -> dict[str, Any]:
+        args: dict[str, Any] = {}
+        args["name"] = cmd.anim_name
+        args["s"] = cmd.fade_speed
+        args["t"] = cmd.anim_name
+        args["stay"] = cmd.stay
+        if cmd.queueing_policy is not None:
+            args["q"] = cmd.queueing_policy.value
+        args["r"] = cmd.requeue
+        if cmd.direction_long is not None:
+            args["d"] = "long" if cmd.direction_long else "short"
+        return args
+
+    @classmethod
+    def from_color_command(cls, cmd: ColorCommandHsv | ColorCommandRgbww) -> Self:
+        base_args = cls._gather_base_args(cmd)
+        ctrl_cmd = cls(**base_args)
+
+        if isinstance(cmd, ColorCommandHsv):
+            hsv = ControllerColorHsv()
+            hsv.h = cmd.h
+            hsv.v = cmd.s
+            hsv.v = cmd.v
+            hsv.ct = cmd.ct
+            ctrl_cmd.hsv = hsv
+        else:  # ColorCommandRgbww
+            raw = ControllerColorRaw()
+            raw.r = cmd.r
+            raw.g = cmd.g
+            raw.b = cmd.b
+            raw.cw = cmd.cw
+            raw.ww = cmd.ww
+            ctrl_cmd.raw = raw
+
+        return ctrl_cmd
+
+    def asdict_compact(self):
+        return asdict(
+            self, dict_factory=lambda x: {k: v for (k, v) in x if v is not None}
+        )
+
+
+_SIM_RESPONSES: dict[str, Any] = {
     "info": {
         "firmware": "9.0-sim",
         "heap_free": 21123,
@@ -88,10 +165,10 @@ class RgbwwController:
         self.host = host
         self.connected = False
         self.color = _ColorState(0, 0, 0, 0, "raw", 0, 0, 0, 0, 0)
-        self._connection_task: asyncio.Task | None = None
-        self._info_cached: dict | None = None
-        self._config_cached: dict | None = None
-        self._clock_slave_status_cache: dict | None = None
+        self._connection_task: asyncio.Task[None] | None = None
+        self._info_cached: dict[str, Any] | None = None
+        self._config_cached: dict[str, Any] | None = None
+        self._clock_slave_status_cache: dict[str, Any] | None = None
 
         self._callbacks: list[RgbwwStateUpdate] = []
         self._buffer = ""
@@ -100,7 +177,7 @@ class RgbwwController:
         self.state_completed = False
         self._simulation = os.getenv("SIMULATION")
 
-    def _consume_json_msg(self) -> dict | None:
+    def _consume_json_msg(self) -> dict[str, Any] | None:
         try:
             # Try to decode an object from the current position
             decoder = json.JSONDecoder()
@@ -123,7 +200,7 @@ class RgbwwController:
                 last_slave_offset = time.monotonic()
                 while not self._stop_event.is_set():
 
-                    def _get_rpc(name: str):
+                    def _get_rpc(name: str) -> dict[str, Any]:
                         method = name
                         if method == "color":
                             method = "color_event"
@@ -195,14 +272,13 @@ class RgbwwController:
                     while (json_msg := self._consume_json_msg()) is not None:
                         self._on_json_message(json_msg)
                     # -----------------------------
+            except (ConnectionResetError, asyncio.IncompleteReadError) as e:
+                # This happens if an established connection is lost mid-communication
+                _logger.warning("💔 Connection lost: %s", str(e))
 
             except (ConnectionRefusedError, OSError) as e:
                 # This happens if the server is not running or unreachable
                 _logger.warning("❌ Connection failed: %s", str(e))
-
-            except (ConnectionResetError, asyncio.IncompleteReadError) as e:
-                # This happens if an established connection is lost mid-communication
-                _logger.warning("💔 Connection lost: %s", str(e))
 
             except Exception as e:
                 # Catch any other unexpected errors
@@ -220,7 +296,6 @@ class RgbwwController:
 
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop_event.wait(), reconnect_delay)
-            pass
 
     def register_callback(self, rcv: RgbwwStateUpdate) -> None:
         """Register a callback object."""
@@ -272,72 +347,30 @@ class RgbwwController:
             self._writer.close()
             await self._writer.wait_closed()
 
-    async def set_anim_commands(self, anim_commands: list[AnimCommand]) -> None:
-        cmds = {"cmds": [x.to_dict() for x in anim_commands]}
-        await self._send_http_post("color", payload=cmds)
-
-    async def set_hsv(
-        self,
-        hue: int | None = None,
-        saturation: int | None = None,
-        brightness: int | None = None,
-        t: float | None = None,
-        ct: int | None = None,
+    async def send_color_command(
+        self, color_command: ColorCommandHsv | ColorCommandRgbww
     ) -> None:
-        # data = {
-        #    "hsv": {"h": 100, "s": 100, "v": 100, "ct": 2700},
-        #    "cmd": "",  # transition type
-        #    "t": 2.0,  # fade time
-        #    "s": 1.0,  # fade speed
-        #    "q": 1,
-        # }
-        data: dict[str, any] = {"hsv": {}}
+        await self._send_color(
+            payload=ControllerColorCommand.from_color_command(
+                color_command
+            ).asdict_compact()
+        )
 
-        if hue is not None:
-            data["hsv"]["h"] = hue
-
-        if brightness is not None:
-            data["hsv"]["v"] = brightness
-
-        if saturation is not None:
-            data["hsv"]["s"] = saturation
-
-        if ct is not None:
-            data["hsv"]["ct"] = ct
-
-        if t is not None:
-            data["t"] = t
-
-        await self._send_http_post("color", data)
-
-    async def set_raw(
-        self,
-        r: int | None = None,
-        g: int | None = None,
-        b: int | None = None,
-        cw: int | None = None,
-        ww: int | None = None,
+    async def send_color_commands(
+        self, anim_commands: list[ColorCommandHsv | ColorCommandRgbww]
     ) -> None:
-        data: dict[str, any] = {"raw": {}}
+        cmds = {
+            "cmds": [
+                ControllerColorCommand.from_color_command(x).asdict_compact()
+                for x in anim_commands
+            ]
+        }
+        await self._send_color(cmds)
 
-        if r is not None:
-            data["raw"]["r"] = r
+    async def _send_color(self, payload: dict[str, Any]) -> None:
+        await self._send_http_post("color", payload=payload)
 
-        if g is not None:
-            data["raw"]["g"] = g
-
-        if b is not None:
-            data["raw"]["b"] = b
-
-        if cw is not None:
-            data["raw"]["cw"] = cw
-
-        if ww is not None:
-            data["raw"]["ww"] = ww
-
-        await self._send_http_post("color", data)
-
-    async def set_channel_command(
+    async def send_channel_command(
         self,
         command: Literal["pause", "continue", "stop"],
         channels: list[str],
@@ -356,11 +389,11 @@ class RgbwwController:
                 raise ValueError(f"Invalid channel: {ch}")
 
         channels = [channel_name_map[ch] for ch in channels]
-        data: dict[str, any] = {"channels": channels}
+        data: dict[str, Any] = {"channels": channels}
 
         await self._send_http_post(command, data)
 
-    def _update_colorstate_from_json(self, json_msg: dict) -> None:
+    def _update_colorstate_from_json(self, json_msg: dict[str, Any]) -> None:
         if "hsv" in json_msg:
             self.color.hue = json_msg["hsv"].get("h", self.color.hue)
             self.color.saturation = json_msg["hsv"].get("s", self.color.saturation)
@@ -377,7 +410,7 @@ class RgbwwController:
         if "mode" in json_msg:
             self.color.color_mode = json_msg["mode"]
 
-    def _on_json_message(self, json_msg: dict) -> None:
+    def _on_json_message(self, json_msg: dict[str, Any]) -> None:
         # ANY data from the server resets the timer.
         match json_msg["method"]:
             case "color_event":
@@ -455,43 +488,42 @@ class RgbwwController:
         self._update_colorstate_from_json(json_data)
 
     @property
-    def info(self) -> dict:
+    def info(self) -> dict[str, Any]:
         if self._info_cached is None:
             raise RuntimeError("Info not loaded yet")
         return self._info_cached
 
     @property
-    def config(self) -> dict:
+    def config(self) -> dict[str, Any]:
         if self._config_cached is None:
             raise RuntimeError("Config not loaded yet")
         return self._config_cached
 
     @property
     def device_name(self) -> str:
+        if self._config_cached is None:
+            raise RuntimeError("Config not loaded yet")
         return self._config_cached["general"]["device_name"]
 
     @property
-    def clock_slave_status(self) -> dict:
+    def clock_slave_status(self) -> dict[str, Any] | None:
         return self._clock_slave_status_cache
 
-    async def _send_http_post(self, endpoint: str, payload: dict[str, any]) -> None:
+    async def _send_http_post(self, endpoint: str, payload: dict[str, Any]) -> None:
         if self._simulation:
             if endpoint == "config":
-                return {"as": "as"}
+                return None
             raise HomeAssistantError("Endpoint not supported by simulation")
 
-        headers = {
-            "user-agent": "homeassistant-fhem_rgbwwcontroller",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
         session = async_get_clientsession(self._hass)
         try:
             # Use a timeout to prevent the request from hanging indefinitely
-            async with async_timeout.timeout(self._HTTP_REQUEST_TIMEOUT):
+            async with asyncio.Timeout(self._HTTP_REQUEST_TIMEOUT):
                 # The actual request using the shared session
                 response = await session.post(
-                    f"http://{self.host}/{endpoint}", json=payload, headers=headers
+                    f"http://{self.host}/{endpoint}",
+                    json=payload,
+                    headers=_HTTP_HEADERS,
                 )
 
                 # Raise an exception if the response has an error status (4xx or 5xx)
@@ -506,25 +538,19 @@ class RgbwwController:
                 f"Failed to connect to controller: {err}"
             ) from err
 
-    async def _send_http_get(self, endpoint: str) -> str:
+    async def _send_http_get(self, endpoint: str) -> dict[str, Any]:
         if self._simulation:
             if endpoint not in _SIM_RESPONSES:
                 raise HomeAssistantError("Endpoint not supported by simulation")
             return _SIM_RESPONSES[endpoint]
 
-        headers = {
-            "user-agent": "homeassistant-fhem_rgbwwcontroller",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-
         session = async_get_clientsession(self._hass)
         try:
             # Use a timeout to prevent the request from hanging indefinitely
-            async with async_timeout.timeout(self._HTTP_REQUEST_TIMEOUT):
+            async with asyncio.Timeout(self._HTTP_REQUEST_TIMEOUT):
                 # The actual request using the shared session
                 response = await session.get(
-                    f"http://{self.host}/{endpoint}", headers=headers
+                    f"http://{self.host}/{endpoint}", headers=_HTTP_HEADERS
                 )
 
                 # Raise an exception if the response has an error status (4xx or 5xx)

@@ -1,8 +1,7 @@
 animation_cli_hsv:
-  name: Run an animation on the controller
+  name: Run an HSV animation on the controller using CLI
   description: >
-    Sets a sequence of colors using a list of HSV values.
-    The list must not be empty.
+    Use the command line syntax to define a HSV animation.
   target:
     entity:
       domain: light
@@ -15,11 +14,10 @@ animation_cli_hsv:
       selector:
         text:
 
-animation_cli_raw:
-  name: Run an RGB(WW) animation on the controller
+animation_cli_rgbww:
+  name: Run an RGB(WW) animation on the controller using CLI
   description: >
-    Sets a sequence of colors using a list of RGB(WW) values.
-    The list must not be empty.
+    Use the command line syntax to define an RGB(WW) animation.
   target:
     entity:
       domain: light
@@ -33,7 +31,7 @@ animation_cli_raw:
         text:
 
 animation_hsv:
-  name: Run an animation on the controller
+  name: Run an animation on the controller using the HSV channels
   description: >
     Sets a sequence of colors using a list of HSV values.
     The list must not be empty.
@@ -111,7 +109,7 @@ animation_hsv:
                 boolean:
 
 
-animation_raw:
+animation_rgbww:
   name: Run an animation on the controller using the RGB(WW) channles
   description: >
     Sets a sequence of colors using a list of RGB(WW) values.

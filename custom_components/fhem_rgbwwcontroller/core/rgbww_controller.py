@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Sequence
 import contextlib
 from dataclasses import asdict, dataclass
 import json
@@ -357,7 +358,7 @@ class RgbwwController:
         )
 
     async def send_color_commands(
-        self, anim_commands: list[ColorCommandHsv | ColorCommandRgbww]
+        self, anim_commands: Sequence[ColorCommandHsv | ColorCommandRgbww]
     ) -> None:
         cmds = {
             "cmds": [

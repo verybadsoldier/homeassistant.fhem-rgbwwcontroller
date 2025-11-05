@@ -89,7 +89,7 @@ def _get_animation_service_base_schema() -> vol.Schema:
 
 
 def _register_channel_services():
-    async def _service_channel(light_entity: RgbwwLight, call: ServiceCall) -> None:
+    async def on_service_channel(light_entity: RgbwwLight, call: ServiceCall) -> None:
         """Handle the channel service call."""
         _logger.debug(
             "Channel service called for entity %s. Channel: %s",
@@ -117,7 +117,7 @@ def _register_channel_services():
     platform.async_register_entity_service(
         "control_channel",
         CONTROL_CHANNEL_SCHEMA,
-        _service_channel,
+        on_service_channel,
     )
 
 
@@ -149,7 +149,7 @@ def _register_animation_hsv_service():
         ),
     }
 
-    async def _service_animation_hsv(
+    async def on_service_animation_hsv(
         light_entity: RgbwwLight, call: ServiceCall
     ) -> None:
         """Handle the animation service call."""
@@ -161,10 +161,10 @@ def _register_animation_hsv_service():
     platform.async_register_entity_service(
         SERVICE_ANIMATION_HSV,
         ANIMATION_SERVICE_SCHEMA,
-        _service_animation_hsv,
+        on_service_animation_hsv,
     )
 
-    async def _service_animation_cli_hsv(
+    async def on_service_animation_cli_hsv(
         light_entity: RgbwwLight, call: ServiceCall
     ) -> None:
         _logger.debug(
@@ -180,7 +180,7 @@ def _register_animation_hsv_service():
     platform.async_register_entity_service(
         SERVICE_ANIMATION_CLI_HSV,
         ANIMATION_CLI_SERVICE_SCHEMA,
-        _service_animation_cli_hsv,
+        on_service_animation_cli_hsv,
     )
 
 
@@ -210,7 +210,7 @@ def _register_animation_rgbww_service():
         ),
     }
 
-    async def _service_animation_rgbww(
+    async def on_service_animation_rgbww(
         light_entity: RgbwwLight, call: ServiceCall
     ) -> None:
         """Handle the animation service call."""
@@ -223,10 +223,10 @@ def _register_animation_rgbww_service():
     platform.async_register_entity_service(
         SERVICE_ANIMATION_RGBWW,
         ANIMATION_SERVICE_SCHEMA,
-        _service_animation_rgbww,
+        on_service_animation_rgbww,
     )
 
-    async def _service_animation_cli_rgbww(
+    async def on_service_animation_cli_rgbww(
         light_entity: RgbwwLight, call: ServiceCall
     ) -> None:
         _logger.debug(
@@ -242,7 +242,7 @@ def _register_animation_rgbww_service():
     platform.async_register_entity_service(
         SERVICE_ANIMATION_CLI_RGBWW,
         ANIMATION_CLI_SERVICE_SCHEMA,
-        _service_animation_cli_rgbww,
+        on_service_animation_cli_rgbww,
     )
 
 
@@ -309,14 +309,10 @@ class RgbwwLight(RgbwwEntity, LightEntity):
         """Subscribe to the events."""
         await super().async_added_to_hass()
 
-        self._controller.register_callback(self)
-
         if self._controller.state_completed:
             self.on_state_completed()
 
     async def async_will_remove_from_hass(self) -> None:
-        self._controller.unregister_callback(self)
-
         await super().async_will_remove_from_hass()
 
     def on_clock_slave_status_update(self) -> None: ...  # noqa: D102

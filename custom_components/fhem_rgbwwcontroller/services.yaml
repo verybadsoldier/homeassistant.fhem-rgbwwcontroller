@@ -191,8 +191,6 @@ animation_rgbww:
               selector:
                 boolean:
 
-# Service definition for the custom integration.
-# This service will be callable as 'your_domain.control_channel'.
 control_channel:
   name: Control Channel
   description: Sends a control command to an entity's channel.

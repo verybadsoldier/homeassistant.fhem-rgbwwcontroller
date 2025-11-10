@@ -39,7 +39,7 @@ animation_hsv:
     entity:
       domain: light
   fields:
-    anim_definition:
+    anim_definitions:
       name: Animation Commands
       description: "A list of command objects."
       required: true
@@ -118,7 +118,7 @@ animation_rgbww:
     entity:
       domain: light
   fields:
-    anim_definition:
+    anim_definitions:
       name: Animation Commands
       description: "A list of command objects."
       required: true

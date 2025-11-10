@@ -89,12 +89,19 @@ class ControllerColorCommand:
     def _gather_base_args(cmd: ColorCommandBase) -> dict[str, Any]:
         args: dict[str, Any] = {}
         args["name"] = cmd.anim_name
-        args["s"] = cmd.fade_speed
-        args["t"] = cmd.anim_name
+
+        if cmd.use_speed:
+            args["s"] = cmd.speed_or_fade_duration
+        else:
+            args["t"] = cmd.speed_or_fade_duration
+
         args["stay"] = cmd.stay
+
         if cmd.queueing_policy is not None:
             args["q"] = cmd.queueing_policy.value
+
         args["r"] = cmd.requeue
+
         if cmd.direction_long is not None:
             args["d"] = "long" if cmd.direction_long else "short"
         return args
@@ -107,7 +114,7 @@ class ControllerColorCommand:
         if isinstance(cmd, ColorCommandHsv):
             hsv = ControllerColorHsv()
             hsv.h = cmd.h
-            hsv.v = cmd.s
+            hsv.s = cmd.s
             hsv.v = cmd.v
             hsv.ct = cmd.ct
             ctrl_cmd.hsv = hsv
@@ -159,7 +166,7 @@ class RgbwwController:
 
     _TCP_PORT = 9090
     _WATCHDOG_DISCONNECT_TIMEOUT = 70
-    _HTTP_REQUEST_TIMEOUT = 5
+    _HTTP_REQUEST_TIMEOUT = 20
 
     def __init__(self, hass: HomeAssistant, host: str) -> None:
         self._hass = hass
@@ -516,10 +523,12 @@ class RgbwwController:
                 return None
             raise HomeAssistantError("Endpoint not supported by simulation")
 
+        print("POST %s - Payload: %s", endpoint, payload)
+
         session = async_get_clientsession(self._hass)
         try:
             # Use a timeout to prevent the request from hanging indefinitely
-            async with asyncio.Timeout(self._HTTP_REQUEST_TIMEOUT):
+            async with asyncio.timeout(self._HTTP_REQUEST_TIMEOUT):
                 # The actual request using the shared session
                 response = await session.post(
                     f"http://{self.host}/{endpoint}",
@@ -530,7 +539,6 @@ class RgbwwController:
                 # Raise an exception if the response has an error status (4xx or 5xx)
                 response.raise_for_status()
 
-                # Return the JSON response
                 return await response.json()
 
         # Handle cases where the device is offline or the connection fails
@@ -565,3 +573,8 @@ class RgbwwController:
             raise ControllerUnavailableError(
                 f"Failed to connect to controller: {err}"
             ) from err
+
+
+if __name__ == "__main__":
+    ctrl = RgbwwController(None, "192.168.2.53")
+    ctrl.send_color_command(ColorCommandHsv(h=120, s=100, v=100))

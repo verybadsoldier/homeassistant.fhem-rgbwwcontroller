@@ -423,7 +423,7 @@ class RgbwwLight(RgbwwEntity, LightEntity):
                 self._attr_color_mode = ColorMode.RGBWW
                 self._attr_is_on = any(c > 0 for c in rgbww)
             elif (hs := kwargs.get(ATTR_HS_COLOR)) is not None:
-                hsv_params = {"hue": hs[0], "saturation": hs[1], "t": 500}
+                hsv_params = {"h": hs[0], "s": hs[1], "fade": 500}
                 self._attr_hs_color = hs
                 # self._attr_color_mode = ColorMode.RGBWW
             if (ct := kwargs.get(ATTR_COLOR_TEMP_KELVIN)) is not None:
@@ -436,13 +436,11 @@ class RgbwwLight(RgbwwEntity, LightEntity):
                 await self._controller.send_color_command(ColorCommandHsv(v=100))
 
             if (brightness := kwargs.get(ATTR_BRIGHTNESS)) is not None:
-                hsv_params["brightness"] = scale_to_ranged_value(
-                    (0, 255), (0, 100), brightness
-                )
+                hsv_params["v"] = scale_to_ranged_value((0, 255), (0, 100), brightness)
                 self._attr_brightness = brightness
                 self._attr_is_on = brightness > 0
             if (transition := kwargs.get(ATTR_TRANSITION)) is not None:
-                hsv_params["t"] = int(transition * 1000)  # seconds to milliseconds
+                hsv_params["fade"] = int(transition * 1000)  # seconds to milliseconds
 
         except ControllerUnavailableError as e:
             _logger.error("async_turn_on failed. Controller error: %s", e)
@@ -456,7 +454,7 @@ class RgbwwLight(RgbwwEntity, LightEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
-        await self._controller.set_hsv(brightness=0)
+        await self._controller.send_color_command(ColorCommandHsv(v=0))
 
     def on_transition_finished(self, name: str, requeued: bool) -> None:
         event_data: dict[str, Any] = {
@@ -500,7 +498,7 @@ class RgbwwLight(RgbwwEntity, LightEntity):
     async def service_animation_hsv(self, call: ServiceCall) -> None:
         try:
             anims = parse_color_commands(
-                call.data[_SERVICE_ATTR_ANIM_CLI_COMMAND], ChannelsType.HSV
+                call.data[ATTR_ANIM_DEFINITION_LIST], ChannelsType.HSV
             )
             await self._controller.set_anim_commands(anims)
         except ControllerUnavailableError as e:

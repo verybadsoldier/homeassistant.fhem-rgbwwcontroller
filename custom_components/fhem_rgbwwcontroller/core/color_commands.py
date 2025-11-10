@@ -25,8 +25,8 @@ class _QueueingPolicy(StrEnum):
 
 @dataclass
 class ColorCommandBase:
-    fade: int | None = None
-    fade_speed: bool = False
+    speed_or_fade_duration: int | None = None
+    use_speed: bool = False
     stay: int | None = None
     requeue: bool | None = None
     queueing_policy: _QueueingPolicy | None = None
@@ -107,18 +107,18 @@ class ChannelsType(StrEnum):
 
 
 @overload
-def parse_color_command(
+def parse_color_cli_command(
     command_str: str, channels_type: Literal[ChannelsType.HSV]
 ) -> ColorCommandHsv: ...
 
 
 @overload
-def parse_color_command(
+def parse_color_cli_command(
     command_str: str, channels_type: Literal[ChannelsType.RGBWW]
 ) -> ColorCommandRgbww: ...
 
 
-def parse_color_command(
+def parse_color_cli_command(
     command_str: str, channels_type: Literal[ChannelsType.RGBWW, ChannelsType.HSV]
 ) -> ColorCommandHsv | ColorCommandRgbww:
     cmd: ColorCommandHsv | ColorCommandRgbww | None = None
@@ -154,10 +154,15 @@ def parse_color_command(
             is_fade_time_part = False
             if p.startswith("s") and p[1:].isdigit():
                 is_fade_time_part = True
-                cmd.fade_speed = True
+                cmd.use_speed = True
+                p = p[1:]  # remove the 's' prefix
 
             if is_fade_time_part or p.isdigit():
-                cmd.fade = float(p) * 1000
+                cmd.speed_or_fade_duration = float(p)
+                if not cmd.use_speed:
+                    cmd.speed_or_fade_duration *= (
+                        1000  # convert seconds to milliseconds
+                    )
             elif p.endswith("s") and p[:-1].isdigit():
                 cmd.stay = float(p[:-1]) * 1000
             else:
@@ -201,7 +206,7 @@ def parse_color_commands(
 def parse_color_commands(
     commands: str, channels_type: Literal[ChannelsType.RGBWW, ChannelsType.HSV]
 ) -> list[ColorCommandHsv] | list[ColorCommandRgbww]:
-    return [parse_color_command(x, channels_type) for x in commands.split(";")]
+    return [parse_color_cli_command(x, channels_type) for x in commands.split(";")]
 
 
 # --- Example Usage ---
@@ -223,5 +228,5 @@ if __name__ == "__main__":
 
     print("--- Testing AnimCommand Parser ---")
     for test_str in test_strings:
-        result = parse_color_command(test_str, ChannelsType.HSV)
+        result = parse_color_cli_command(test_str, ChannelsType.HSV)
         print(f"Input: '{test_str}' -> Output: {result}")

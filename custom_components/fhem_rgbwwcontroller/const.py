@@ -3,12 +3,13 @@
 DOMAIN = "fhem_rgbwwcontroller"
 DISCOVERY_RESULTS = "discovery_results"
 
-
+# Attribute names used in services
 ATTR_TRANSITION_MODE = "transition_mode"
 ATTR_TRANSITION_VALUE = "transition_value"
 ATTR_STAY = "stay"
 ATTR_QUEUE_POLICY = "queue_policy"
 ATTR_REQUEUE = "requeue"
+ATTR_ANIM_NAME = "anim_name"
 ATTR_ANIM_DEFINITION_LIST = "anim_definitions"
 ATTR_HUE = "hue"
 ATTR_SATURATION = "saturation"

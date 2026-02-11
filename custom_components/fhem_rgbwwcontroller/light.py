@@ -44,13 +44,19 @@ from .const import (
     ATTR_HUE,
     ATTR_QUEUE_POLICY,
     ATTR_REQUEUE,
+    ATTR_ANIM_NAME,
     ATTR_SATURATION,
     ATTR_STAY,
     ATTR_TRANSITION_MODE,
     ATTR_TRANSITION_VALUE,
     DOMAIN,
 )
-from .core.color_commands import ChannelsType, ColorCommandHsv, parse_color_commands
+from .core.color_commands import (
+    ChannelsType,
+    ColorCommandHsv,
+    ColorCommandRgbww,
+    parse_color_commands,
+)
 from .core.rgbww_controller import ControllerUnavailableError, RgbwwController
 
 SERVICE_ANIMATION_HSV = "animation_hsv"
@@ -84,6 +90,7 @@ def _get_animation_service_base_schema() -> vol.Schema:
                 vol.In(["single", "back", "front", "front_reset"])
             ),
             vol.Optional(ATTR_REQUEUE, default=None): vol.Maybe(cv.boolean),
+            vol.Optional(ATTR_ANIM_NAME, default=None): vol.Maybe(cv.string),
         }
     )
 
@@ -423,7 +430,7 @@ class RgbwwLight(RgbwwEntity, LightEntity):
                 self._attr_color_mode = ColorMode.RGBWW
                 self._attr_is_on = any(c > 0 for c in rgbww)
             elif (hs := kwargs.get(ATTR_HS_COLOR)) is not None:
-                hsv_params = {"h": hs[0], "s": hs[1], "fade": 500}
+                hsv_params = {"h": hs[0], "s": hs[1], "speed_or_fade_duration": 500}
                 self._attr_hs_color = hs
                 # self._attr_color_mode = ColorMode.RGBWW
             if (ct := kwargs.get(ATTR_COLOR_TEMP_KELVIN)) is not None:
@@ -440,7 +447,9 @@ class RgbwwLight(RgbwwEntity, LightEntity):
                 self._attr_brightness = brightness
                 self._attr_is_on = brightness > 0
             if (transition := kwargs.get(ATTR_TRANSITION)) is not None:
-                hsv_params["fade"] = int(transition * 1000)  # seconds to milliseconds
+                hsv_params["speed_or_fade_duration"] = int(
+                    transition * 1000
+                )  # seconds to milliseconds
 
         except ControllerUnavailableError as e:
             _logger.error("async_turn_on failed. Controller error: %s", e)
@@ -497,10 +506,11 @@ class RgbwwLight(RgbwwEntity, LightEntity):
 
     async def service_animation_hsv(self, call: ServiceCall) -> None:
         try:
-            anims = parse_color_commands(
-                call.data[ATTR_ANIM_DEFINITION_LIST], ChannelsType.HSV
-            )
-            await self._controller.set_anim_commands(anims)
+            color_commands = [
+                ColorCommandHsv.from_service(cmd)
+                for cmd in call.data[ATTR_ANIM_DEFINITION_LIST]
+            ]
+            await self._controller.send_color_commands(color_commands)
         except ControllerUnavailableError as e:
             # Catch specific errors from your controller library
             _logger.error(
@@ -540,8 +550,11 @@ class RgbwwLight(RgbwwEntity, LightEntity):
 
     async def service_animation_rgbww(self, call: ServiceCall) -> None:
         try:
-            cmds = parse_color_commands(call.data["anim_definition_command"])
-            await self._controller.set_anim_commands(cmds)
+            color_commands = [
+                ColorCommandRgbww.from_service(cmd)
+                for cmd in call.data[ATTR_ANIM_DEFINITION_LIST]
+            ]
+            await self._controller.send_color_commands(color_commands)
         except ControllerUnavailableError as e:
             # Catch specific errors from your controller library
             _logger.error(

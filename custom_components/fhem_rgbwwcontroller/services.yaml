@@ -107,7 +107,10 @@ animation_hsv:
               label: Requeue when finished
               selector:
                 boolean:
-
+            anim_name:
+              label: Create a named animation
+              selector:
+                text:
 
 animation_rgbww:
   name: Run an animation on the controller using the RGB(WW) channles
@@ -190,6 +193,10 @@ animation_rgbww:
               label: Requeue when finished
               selector:
                 boolean:
+            anim_name:
+              label: Create a named animation
+              selector:
+                text:
 
 control_channel:
   name: Control Channel

@@ -11,12 +11,17 @@ from ..const import (
     ATTR_CH_RED,
     ATTR_CH_WW,
     ATTR_HUE,
+    ATTR_QUEUE_POLICY,
     ATTR_REQUEUE,
+    ATTR_ANIM_NAME,
     ATTR_SATURATION,
+    ATTR_STAY,
+    ATTR_TRANSITION_MODE,
+    ATTR_TRANSITION_VALUE,
 )
 
 
-class _QueueingPolicy(StrEnum):
+class _QueuePolicy(StrEnum):
     BACK = "back"
     FRONT = "front"
     FRONT_RESET = "front_reset"
@@ -25,19 +30,37 @@ class _QueueingPolicy(StrEnum):
 
 @dataclass
 class ColorCommandBase:
+    """Internal representation of a color command."""
+
     speed_or_fade_duration: int | None = None
     use_speed: bool = False
     stay: int | None = None
     requeue: bool | None = None
-    queueing_policy: _QueueingPolicy | None = None
+    queue_policy: _QueuePolicy | None = None
     anim_name: str | None = None
     direction_long: bool | None = False  # True if long, False if short
 
     @classmethod
     def _gather_service_base_args(cls, service_attrs: dict[str, Any]) -> dict[str, Any]:
         args: dict[str, Any] = {}
+        if (val := service_attrs.get(ATTR_TRANSITION_VALUE)) is not None:
+            args["speed_or_fade_duration"] = val
+        if (val := service_attrs.get(ATTR_TRANSITION_MODE)) is not None:
+            if val == "speed":
+                use_speed = True
+            elif val == "time":
+                use_speed = False
+            else:
+                raise ValueError(f"invalid transition mode: {val}")
+            args["use_speed"] = use_speed
+        if (val := service_attrs.get(ATTR_STAY)) is not None:
+            args["stay"] = val
         if (val := service_attrs.get(ATTR_REQUEUE)) is not None:
             args["requeue"] = val
+        if (val := service_attrs.get(ATTR_QUEUE_POLICY)) is not None:
+            args["queue_policy"] = _QueuePolicy(val)
+        if (val := service_attrs.get(ATTR_ANIM_NAME)) is not None:
+            args["anim_name"] = val
         return args
 
 
@@ -177,17 +200,17 @@ def parse_color_cli_command(
                 if "d" in p:
                     cmd.direction_long = True
                 if "e" in p:
-                    if cmd.queueing_policy is not None:
+                    if cmd.queue_policy is not None:
                         raise RuntimeError("cannot use multiple queuing policy flags")
-                    cmd.queueing_policy = _QueueingPolicy.FRONT_RESET
+                    cmd.queue_policy = _QueuePolicy.FRONT_RESET
                 if "f" in p:
-                    if cmd.queueing_policy is not None:
+                    if cmd.queue_policy is not None:
                         raise RuntimeError("cannot use multiple queuing policy flags")
-                    cmd.queueing_policy = _QueueingPolicy.FRONT
+                    cmd.queue_policy = _QueuePolicy.FRONT
                 if "q" in p:
-                    if cmd.queueing_policy is not None:
+                    if cmd.queue_policy is not None:
                         raise RuntimeError("cannot use multiple queuing policy flags")
-                    cmd.queueing_policy = _QueueingPolicy.BACK
+                    cmd.queue_policy = _QueuePolicy.BACK
     return cmd
 
 

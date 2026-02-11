@@ -74,11 +74,13 @@ class ControllerColorRaw:
 
 
 @dataclass
-class ControllerColorCommand:
+class ControllerApiColorCommand:
+    """Command to be sent to the controller API. Using the exact field names as expected by the API."""
+
     hsv: ControllerColorHsv | None = None
     raw: ControllerColorRaw | None = None
-    s: int | None = None
-    t: int | None = None
+    s: int | None = None  # fade speed
+    t: int | None = None  # fade duration
     stay: int | None = None
     q: None = None
     name: str | None = None
@@ -97,8 +99,8 @@ class ControllerColorCommand:
 
         args["stay"] = cmd.stay
 
-        if cmd.queueing_policy is not None:
-            args["q"] = cmd.queueing_policy.value
+        if cmd.queue_policy is not None:
+            args["q"] = cmd.queue_policy.value
 
         args["r"] = cmd.requeue
 
@@ -110,6 +112,7 @@ class ControllerColorCommand:
     def from_color_command(cls, cmd: ColorCommandHsv | ColorCommandRgbww) -> Self:
         base_args = cls._gather_base_args(cmd)
         ctrl_cmd = cls(**base_args)
+        ctrl_cmd.t = cmd.speed_or_fade_duration
 
         if isinstance(cmd, ColorCommandHsv):
             hsv = ControllerColorHsv()
@@ -359,7 +362,7 @@ class RgbwwController:
         self, color_command: ColorCommandHsv | ColorCommandRgbww
     ) -> None:
         await self._send_color(
-            payload=ControllerColorCommand.from_color_command(
+            payload=ControllerApiColorCommand.from_color_command(
                 color_command
             ).asdict_compact()
         )
@@ -369,7 +372,7 @@ class RgbwwController:
     ) -> None:
         cmds = {
             "cmds": [
-                ControllerColorCommand.from_color_command(x).asdict_compact()
+                ControllerApiColorCommand.from_color_command(x).asdict_compact()
                 for x in anim_commands
             ]
         }

@@ -68,8 +68,6 @@ class SyncOffsetSensor(RgbwwEntity, SensorEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from the events."""
-        self._controller.unregister_callback(self)
-
         await super().async_will_remove_from_hass()
 
     def on_update_color(self) -> None: ...

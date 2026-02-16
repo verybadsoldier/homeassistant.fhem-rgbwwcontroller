@@ -169,7 +169,7 @@ class RgbwwController:
 
     _TCP_PORT = 9090
     _WATCHDOG_DISCONNECT_TIMEOUT = 70
-    _HTTP_REQUEST_TIMEOUT = 20
+    _HTTP_REQUEST_TIMEOUT = 5
 
     def __init__(self, hass: HomeAssistant, host: str) -> None:
         self._hass = hass
@@ -181,7 +181,7 @@ class RgbwwController:
         self._config_cached: dict[str, Any] | None = None
         self._clock_slave_status_cache: dict[str, Any] | None = None
 
-        self._callbacks: list[RgbwwStateUpdate] = []
+        self._callbacks: dict[int, RgbwwStateUpdate] = {}
         self._buffer = ""
         self._stop_event = asyncio.Event()
         self._writer: asyncio.StreamWriter | None = None
@@ -310,24 +310,26 @@ class RgbwwController:
 
     def register_callback(self, rcv: RgbwwStateUpdate) -> None:
         """Register a callback object."""
-        if rcv in self._callbacks:
+        rcv_id = id(rcv)
+        if rcv_id in self._callbacks:
             raise ValueError("Already registered")
 
-        self._callbacks.append(rcv)
+        self._callbacks[rcv_id] = rcv
 
     def unregister_callback(self, rcv: RgbwwStateUpdate) -> None:
         """Un-Register a callback object."""
-        if rcv not in self._callbacks:
+        rcv_id = id(rcv)
+        if rcv_id not in self._callbacks:
             raise ValueError("Receiver not registered")
 
-        self._callbacks.remove(rcv)
+        del self._callbacks[rcv_id]
 
     async def on_connect_status_change(self, connected: bool) -> None:
         if connected == self.connected:
             return  # No change
 
         self.connected = connected
-        for x in self._callbacks:
+        for x in self._callbacks.values():
             x.on_connection_update()
 
     async def connect(self) -> None:
@@ -428,7 +430,7 @@ class RgbwwController:
                 self._update_colorstate_from_json(json_msg["params"])
                 print(f"{self.host} - {self.color}")
 
-                for x in self._callbacks:
+                for x in self._callbacks.values():
                     x.on_update_color()
             # my $colorMode = "raw";
             # if ( exists $obj->{params}->{hsv} ) {
@@ -441,7 +443,7 @@ class RgbwwController:
             case "info":
                 self._info_cached = json_msg["params"]
             case "transition_finished":
-                for x in self._callbacks:
+                for x in self._callbacks.values():
                     x.on_transition_finished(
                         json_msg["params"]["name"], json_msg["params"]["requeued"]
                     )
@@ -451,17 +453,17 @@ class RgbwwController:
             # }
             case "config":
                 self._config_cached = json_msg["params"]
-                for x in self._callbacks:
+                for x in self._callbacks.values():
                     x.on_config_update()
             case "keep_alive":
                 ...
             case "state_completed":
                 self.state_completed = True
-                for x in self._callbacks:
+                for x in self._callbacks.values():
                     x.on_state_completed()
             case "clock_slave_status":
                 self._clock_slave_status_cache = json_msg["params"]
-                for x in self._callbacks:
+                for x in self._callbacks.values():
                     x.on_clock_slave_status_update()
 
             # elsif ( $obj->{method} eq "keep_alive" ) {
@@ -559,7 +561,7 @@ class RgbwwController:
         session = async_get_clientsession(self._hass)
         try:
             # Use a timeout to prevent the request from hanging indefinitely
-            async with asyncio.Timeout(self._HTTP_REQUEST_TIMEOUT):
+            async with asyncio.timeout(self._HTTP_REQUEST_TIMEOUT):
                 # The actual request using the shared session
                 response = await session.get(
                     f"http://{self.host}/{endpoint}", headers=_HTTP_HEADERS

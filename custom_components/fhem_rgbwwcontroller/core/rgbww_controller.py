@@ -169,7 +169,7 @@ class RgbwwController:
 
     _TCP_PORT = 9090
     _WATCHDOG_DISCONNECT_TIMEOUT = 70
-    _HTTP_REQUEST_TIMEOUT = 5
+    _HTTP_REQUEST_TIMEOUT = 2
 
     def __init__(self, hass: HomeAssistant, host: str) -> None:
         self._hass = hass

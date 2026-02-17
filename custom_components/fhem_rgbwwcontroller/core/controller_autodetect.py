@@ -4,6 +4,8 @@ import logging
 import os
 import random
 import time
+from collections.abc import Awaitable
+
 
 import netifaces
 
@@ -12,6 +14,8 @@ from homeassistant.core import HomeAssistant
 from .rgbww_controller import ControllerUnavailableError, RgbwwController
 
 _logger = logging.getLogger(__name__)
+
+_scan_semaphore = asyncio.Semaphore(25)  # Limit to 25 concurrent scans
 
 
 def get_scan_range() -> ipaddress.IPv4Network | None:
@@ -53,9 +57,9 @@ def get_scan_range() -> ipaddress.IPv4Network | None:
         return None
 
 
-def scan(
+def get_scan_coros(
     hass: HomeAssistant, network: ipaddress.IPv4Network
-) -> list[asyncio.Task[RgbwwController]]:
+) -> list[Awaitable[RgbwwController | None]]:
     """Scans the given network for FHEM RGBWW Controller devices."""
     if network.prefixlen < 13:
         raise ValueError(
@@ -77,16 +81,17 @@ async def _check_ip_dummy(ip: str) -> RgbwwController | None:
 
 
 async def _check_ip(hass: HomeAssistant, ip: str) -> RgbwwController | None:
-    controller = RgbwwController(hass, ip)
+    async with _scan_semaphore:
+        controller = RgbwwController(hass, ip)
 
-    try:
-        await controller.refresh()
-        mac = controller.info["connection"]["mac"]
-        _logger.debug("Found device at %s with MAC %s", ip, mac)
-    except ControllerUnavailableError:
-        return None
-    else:
-        return controller
+        try:
+            await controller.refresh()
+            mac = controller.info["connection"]["mac"]
+            _logger.debug("Found device at %s with MAC %s", ip, mac)
+        except ControllerUnavailableError:
+            return None
+        else:
+            return controller
 
 
 async def main_autodetect():
@@ -94,7 +99,7 @@ async def main_autodetect():
     # mask = AutoDetector.get_scan_range()
 
     network = ipaddress.IPv4Network("192.168.2.0/24")
-    devices = await scan(network)
+    devices = await get_scan_coros(network)
     now2 = time.monotonic()
     print(f"Found {len(devices)} devices:")
 

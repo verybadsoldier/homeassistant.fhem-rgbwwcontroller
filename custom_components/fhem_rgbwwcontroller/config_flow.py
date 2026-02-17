@@ -115,7 +115,9 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
             self._scan_network = ipaddress.IPv4Network(user_input["scan_network"])
             self._scan_tasks = [
                 asyncio.create_task(x)
-                for x in controller_autodetect.scan(self.hass, self._scan_network)
+                for x in controller_autodetect.get_scan_coros(
+                    self.hass, self._scan_network
+                )
             ]
 
             self._scan_monitor_task = self.hass.async_create_task(

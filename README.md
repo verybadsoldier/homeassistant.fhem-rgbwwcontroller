@@ -21,7 +21,7 @@ This integration uses a highly responsive local TCP connection to communicate wi
 * **Local Push Updates:** Uses a persistent TCP connection (Port 9090) to receive instant state changes directly from the controller.
 * **Auto-Discovery Setup:** Built-in network scanner to easily find and add controllers on your local subnet (e.g., `192.168.1.0/24`).
 * **Hardware Animations:** Send complex, multi-step color sequences directly to the hardware using standard YAML or a compact CLI syntax.
-* **Queue Management:** Dedicated services to pause, continue, or stop running animations on the controller.
+* **Queue Management:** Dedicated actions to pause, continue, or stop running animations on the controller.
 * **Hardware Synchronization:** Exposes a `SyncOffset` sensor to monitor the clock synchronization status between multiple controllers.
 * **Automation Triggers:** Built-in device triggers for when a hardware transition finishes (`transition_finished`).
 
@@ -33,7 +33,7 @@ To fully utilize the hardware capabilities, this integration handles colors diff
 
 * **HSV + CT Focus in UI:** The standard Home Assistant light card will expose controls for **HSV** (Hue, Saturation, Brightness) alongside a **Color Temperature** slider.
 * **Simultaneous Color & Temperature:** Unlike typical integrations where changing the color temperature switches the light into a mutually exclusive "White Mode," this integration treats Color Temperature as an additional parameter to the HSV color space. Moving the color temperature slider will affect the temperature of the active HSV mode rather than disabling the colors.
-* **Raw 5-Channel Control (RGBWW):** The controller supports independent driving of all 5 hardware channels (Red, Green, Blue, Cold White, Warm White). While the standard UI uses the HSV+CT model for a cleaner user experience, you can execute raw 5-channel commands via the integration's dedicated `rgbww` custom services.
+* **Raw 5-Channel Control (RGBWW):** The controller supports independent driving of all 5 hardware channels (Red, Green, Blue, Cold White, Warm White). While the standard UI uses the HSV+CT model for a cleaner user experience, you can execute raw 5-channel commands via the integration's dedicated `rgbww` custom actions.
 
 ---
 
@@ -82,15 +82,15 @@ Once configured, each controller will provide the following entities:
 
 ---
 
-## 🚀 Advanced Usage & Services
+## 🚀 Advanced Usage & Actions
 
-This integration really shines when used in automations. It provides dedicated services to queue up animations, control hardware channels, and manipulate playback.
+This integration really shines when used in automations. It provides dedicated actions to queue up animations, control hardware channels, and manipulate playback.
 
 To keep this guide clean, the detailed syntax and examples for these advanced features are documented separately.
 
 📚 **Please see the detailed documentation pages:**
 
-* **[Advanced Services](docs/services.md):** How to use integrated services for using the controller.
+* **[Actions](docs/actions.md):** How to use integrated actions.
 
 * **[Animation CLI](docs/cli.md):** Learn how to write complex light sequences by using the CLI string syntax.
 
@@ -98,4 +98,8 @@ To keep this guide clean, the detailed syntax and examples for these advanced fe
 
 ## 🐛 Troubleshooting
 
-* **Device Unavailable:** Ensure
+* **Device Unavailable:** Ensure the controller is powered on, connected to your Wi-Fi, and that Home Assistant can reach it via TCP port 9090 and HTTP.
+* **Animations not playing:** Check your queue policy flags (`f`, `q`, `e`) in your action calls to ensure you aren't appending to a paused or stalled queue. 
+
+---
+*Created for the Home Assistant and FHEM community.*

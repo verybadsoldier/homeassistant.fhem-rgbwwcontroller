@@ -275,7 +275,6 @@ class RgbwwController:
                         _logger.warning("🚪 Server closed the connection.")
                         break  # Exit the inner loop to trigger reconnection logic.
 
-                    # --- PROCESS YOUR DATA HERE ---
                     self._buffer += data.decode("utf-8")
 
                     while (json_msg := self._consume_json_msg()) is not None:

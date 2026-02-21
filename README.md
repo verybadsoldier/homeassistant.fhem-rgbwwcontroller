@@ -12,11 +12,20 @@ While there are multiple firmwares available for this hardware, **this integrati
 
 ---
 
-This integration uses a highly responsive local TCP connection to communicate with your hardware, ensuring instant state updates without the need for polling. It goes beyond simple on/off commands, unlocking the full potential of your LED controllers with advanced hardware-level animations, unique color handling, and precise queue management.
+## 🛠️ Hardware & Firmware Highlights
+
+If you are new to this specific hardware, here is what makes the ESP RGBWW Controller stand out:
+
+* **Native HSV+CT Engine:** Natively accepts HSV+CT color commands and dynamically renders them to the available physical hardware channels (RGB, RGBW, or RGBWW) for perfectly blended colors.
+* **Hardware-Level Animations:** Executes super-smooth, programmable color animations directly on the microcontroller chip, ensuring zero network lag.
+* **Independent Channel Control:** Treats HSV and CT as four completely independent channels. For example, you can fade the brightness (Value) up or down without interrupting a rainbow animation currently running on the Hue channel.
+* **Multi-Controller Synchronization:** Features highly-accurate clock synchronization via MQTT, allowing multiple independent LED strips in a room to run animations in perfect unison.
+* **Dual Protocols:** Natively supports both HTTP and MQTT simultaneously.
+* **Real-Time Push Updates:** No need for polling. The controller actively pushes state changes back to Home Assistant via a persistent TCP connection or MQTT.
 
 ---
 
-## ✨ Features
+## ✨ Integration Features
 
 * **Local Push Updates:** Uses a persistent TCP connection (Port 9090) to receive instant state changes directly from the controller.
 * **Auto-Discovery Setup:** Built-in network scanner to easily find and add controllers on your local subnet (e.g., `192.168.1.0/24`).
@@ -90,9 +99,16 @@ To keep this guide clean, the detailed syntax and examples for these advanced fe
 
 📚 **Please see the detailed documentation pages:**
 
-* **[Actions](docs/actions.md):** How to use integrated actions.
+* **[Advanced Actions & Animation CLI](docs/actions.md):** Learn how to use the integrated actions and write complex light sequences using the structured YAML or the compact CLI string syntax.
 
-* **[Animation CLI](docs/cli.md):** Learn how to write complex light sequences by using the CLI string syntax.
+---
+
+## 📋 Upcoming Features (To-Do)
+
+This project is actively being improved. The following features are planned for future releases:
+
+* **Configuration Interface:** Add a UI-based configuration interface to easily adjust underlying hardware settings directly from Home Assistant.
+* **Real-time Status Sensors:** Expose more real-time hardware status values as diagnostic sensors within the integration.
 
 ---
 

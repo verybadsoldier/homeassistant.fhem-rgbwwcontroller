@@ -1,13 +1,16 @@
 """Update platform for FHEM RGBWW Controller."""
+
 from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from enum import Enum
 import logging
 from typing import Any
 
 from aiohttp import ClientError
 
+from homeassistant.components.light import cast
 from homeassistant.components.update import (
     UpdateEntity,
     UpdateEntityFeature,
@@ -32,17 +35,24 @@ _logger = logging.getLogger(__name__)
 DEFAULT_OTA_URL = "http://rgbww.dronezone.de/testing/version.json"
 
 
+class _UpdateFwStatus(Enum):
+    IDLE = 0
+    OTA_PROCESSING = 1
+    OTA_SUCCESS = 2
+    OTA_FAILED = 4
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Update entity from a config entry."""
-    controller: RgbwwController = hass.data[DOMAIN][entry.entry_id]
+    controller = cast(RgbwwController, entry.runtime_data)
 
     # Create the coordinator that periodically checks the external version.json
     coordinator = RgbwwFirmwareCoordinator(hass, controller)
-    
+
     # Initial data fetch
     await coordinator.async_config_entry_first_refresh()
 
@@ -59,15 +69,17 @@ class RgbwwFirmwareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _logger,
             name=f"{controller.device_name} Firmware Check",
             # Only check twice a day to save server resources and avoid rate limits
-            update_interval=timedelta(hours=12), 
+            update_interval=timedelta(hours=12),
         )
         self.controller = controller
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch the latest firmware data from the configured OTA URL."""
         # Read the URL from the controller config (matching the firmware's behavior)
-        ota_url = self.controller.config.get("general", {}).get("otaurl", DEFAULT_OTA_URL)
-        
+        ota_url = self.controller.config.get("general", {}).get(
+            "otaurl", DEFAULT_OTA_URL
+        )
+
         session = async_get_clientsession(self.hass)
         try:
             async with session.get(ota_url) as response:
@@ -77,14 +89,18 @@ class RgbwwFirmwareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Error communicating with OTA server: {err}") from err
 
 
-class RgbwwFirmwareUpdateEntity(CoordinatorEntity[RgbwwFirmwareCoordinator], UpdateEntity):
+class RgbwwFirmwareUpdateEntity(
+    CoordinatorEntity[RgbwwFirmwareCoordinator], UpdateEntity
+):
     """Representation of a Firmware Update entity."""
 
     _attr_has_entity_name = True
     _attr_name = "Firmware Update"
-    
+
     # Enables the "Install" button in the UI and supports the in_progress property
-    _attr_supported_features = UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+    _attr_supported_features = (
+        UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS
+    )
 
     def __init__(
         self, coordinator: RgbwwFirmwareCoordinator, controller: RgbwwController
@@ -92,12 +108,12 @@ class RgbwwFirmwareUpdateEntity(CoordinatorEntity[RgbwwFirmwareCoordinator], Upd
         """Initialize the update entity."""
         super().__init__(coordinator)
         self.controller = controller
-        
+
         mac = controller.info["connection"]["mac"]
         self._attr_unique_id = f"{mac}_update"
-        
+
         # TODO: Link your device_info here so the entity is grouped under the device
-        # self._attr_device_info = ... 
+        # self._attr_device_info = ...
 
     @property
     def installed_version(self) -> str | None:
@@ -112,48 +128,52 @@ class RgbwwFirmwareUpdateEntity(CoordinatorEntity[RgbwwFirmwareCoordinator], Upd
             return self.coordinator.data.get("rom", {}).get("fw_version")
         return None
 
-    async def async_install(self, version: str | None, backup: bool, **kwargs: Any) -> None:
+    async def async_install(
+        self, version: str | None, backup: bool, **kwargs: Any
+    ) -> None:
         """Install an update."""
         update_payload = self.coordinator.data
         if not update_payload:
             raise HomeAssistantError("Cannot start update: No version data available.")
 
         _logger.info("Starting firmware update for %s", self.controller.host)
-        
+
         try:
             # 1. Trigger the update by POSTing the version.json payload
             await self.controller.async_trigger_ota_update(update_payload)
-            
+
             # 2. Polling loop for the status (non-blocking due to asyncio.sleep)
-            status = 1  # 1 = OTA_PROCESSING
+            status = _UpdateFwStatus.OTA_PROCESSING
             self._attr_in_progress = True
-            
+
             # Wait a maximum of 300 seconds (matching the FHEM script logic)
-            timeout_counter = 0 
-            
-            while status == 1 and timeout_counter < 150: 
+            timeout_counter = 0
+
+            while status == _UpdateFwStatus.OTA_PROCESSING and timeout_counter < 150:
                 # Update UI to show that the installation is actively progressing
-                self.async_write_ha_state() 
+                self.async_write_ha_state()
                 await asyncio.sleep(2)
                 timeout_counter += 1
-                
+
                 status_res = await self.controller.async_get_ota_status()
-                status = status_res.get("status", 0)
+                status = _UpdateFwStatus(status_res.get("status", 0))
 
             self._attr_in_progress = False
 
             # 3. Evaluate the final status
-            if status == 2:
-                _logger.info("Firmware update successful. Restarting %s", self.controller.host)
+            if status == _UpdateFwStatus.OTA_SUCCESS:
+                _logger.info(
+                    "Firmware update successful. Restarting %s", self.controller.host
+                )
                 await self.controller.async_restart_device()
-                
+
                 # Short pause, then reload data so the new version appears in the UI
                 await asyncio.sleep(5)
                 await self.controller.refresh()
                 self.async_write_ha_state()
-            elif status == 4:
+            elif status == _UpdateFwStatus.OTA_FAILED:
                 raise HomeAssistantError("Firmware update failed on the device.")
-            elif status == 1:
+            elif status == _UpdateFwStatus.OTA_PROCESSING:
                 raise HomeAssistantError("Firmware update timed out.")
 
         except Exception as err:

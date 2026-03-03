@@ -251,12 +251,19 @@ class RgbwwController:
                     self.host, self._TCP_PORT
                 )
 
+                _logger.info(
+                    "Connected to %s:%s! Starting to read data...",
+                    self.host,
+                    self._TCP_PORT,
+                )
+
                 # 2. Connection Established Notification
                 # If we reach this line, the connection was successful.
                 await self.on_connect_status_change(True)
 
                 # 3. Main loop to read data (your "work" goes here)
                 while not self._stop_event.is_set():
+                    _logger.info("Waiting for data from %s...", self.host)
                     # For your LED controller, this is where you'd wait for events.
                     try:
                         data = await asyncio.wait_for(
@@ -274,6 +281,10 @@ class RgbwwController:
                         # This indicates the server has closed the connection gracefully.
                         _logger.warning("🚪 Server closed the connection.")
                         break  # Exit the inner loop to trigger reconnection logic.
+
+                    _logger.info(
+                        "Received data from %s: %s", self.host, data.decode("utf-8")
+                    )
 
                     self._buffer += data.decode("utf-8")
 

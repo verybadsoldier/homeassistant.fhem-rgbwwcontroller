@@ -6,11 +6,15 @@ import asyncio
 from dataclasses import dataclass
 import datetime
 import ipaddress
+import json
 import logging
 from typing import Any, cast
 
+from aiohttp import payload
 from httpx import HTTPError
 import voluptuous as vol
+
+from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 
 from .core.rgbww_controller import (
     RgbwwController,
@@ -311,6 +315,49 @@ class RgbwwConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
                 errors=errors,
             )
+
+    async def async_step_mqtt(
+        self, discovery_info: MqttServiceInfo
+    ) -> ConfigFlowResult:
+        """Handle a flow initialized by MQTT discovery."""
+        try:
+            json_data = json.loads(discovery_info.payload)
+
+            # Extract the device ID or IP from the payload or topic
+            # and check if we already configured this device
+            await self.async_set_unique_id(json_data["mac_address"])
+            self._abort_if_unique_id_configured()
+
+            # Save the discovered data to use in the setup form
+            self.context["title"] = json_data["device_name"]
+            self.context["host"] = json_data["ip_address"]
+
+            # Show the confirmation dialog to the user
+            return await self.async_step_confirm()
+        except json.decoder.JSONDecodeError:
+            return self.async_abort(reason="mqtt_invalid_payload")
+
+    async def async_step_confirm(
+        self, user_input: dict[str, any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm the setup of the discovered device."""
+        if user_input is not None:
+            # The user clicked "Submit", create the entry
+            return self.async_create_entry(
+                title=self.context["title"],
+                data={
+                    CONF_HOST: self.context["host"],
+                    CONF_NAME: self.context["title"],
+                },
+            )
+
+        return self.async_show_form(
+            step_id="confirm",
+            description_placeholders={
+                CONF_NAME: self.context["title"],
+                CONF_HOST: self.context["host"],
+            },
+        )
 
 
 OPTIONS_SCHEMA = vol.Schema(

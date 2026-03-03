@@ -51,6 +51,14 @@
         "data": {
           "name": "Device name"
         }
+      },
+      "confirm": {
+        "title": "Add FHEM RGBWW Controller",
+        "description": "Do you want to add the discovered device **{name}** at IP address **{host}**?",
+        "submit":"Add Device",
+        "data": {
+          "name": "Device name"
+        }
       }
     }
   }

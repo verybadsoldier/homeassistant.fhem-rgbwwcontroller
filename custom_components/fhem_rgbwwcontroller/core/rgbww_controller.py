@@ -555,3 +555,15 @@ class RgbwwController:
             raise ControllerUnavailableError(
                 f"Failed to connect to controller: {err}"
             ) from err
+
+    async def async_trigger_ota_update(self, update_json: dict[str, Any]) -> None:
+        """Trigger the OTA update by sending the version.json payload."""
+        await self._send_http_post("update", payload=update_json)
+
+    async def async_get_ota_status(self) -> dict[str, Any]:
+        """Get the current OTA status (0=None, 1=Updating, 2=Success, 4=Failed)."""
+        return await self._send_http_get("update")
+
+    async def async_restart_device(self) -> None:
+        """Restart the controller after a successful update."""
+        await self._send_http_post("system", payload={"cmd": "restart"})

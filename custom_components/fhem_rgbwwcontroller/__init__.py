@@ -13,7 +13,7 @@ from .core.rgbww_controller import RgbwwController
 
 _logger = logging.getLogger(__name__)
 
-_PLATFORMS: list[Platform] = [Platform.LIGHT, Platform.SENSOR]
+_PLATFORMS: list[Platform] = [Platform.LIGHT, Platform.SENSOR, Platform.UPDATE]
 
 ATTR_NAME = "name"
 DEFAULT_NAME = "World"

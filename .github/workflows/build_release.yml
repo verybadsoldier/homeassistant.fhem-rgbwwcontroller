@@ -1,0 +1,32 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*" # Triggers on semantic versioning tags starting with 'v', e.g., v0.9.1
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to publish the GitHub Release
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create component archive
+        run: |
+          # Navigate into the custom_components directory
+          cd custom_components
+          
+          # Zip the integration folder and append the version tag to the filename
+          zip -r ../fhem_rgbwwcontroller-${{ github.ref_name }}.zip fhem_rgbwwcontroller/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          # Upload the specifically named zip file we just created in the root
+          files: fhem_rgbwwcontroller-${{ github.ref_name }}.zip
+          generate_release_notes: true
